@@ -525,6 +525,39 @@
                                 <span class="property-label">关键帧</span>
                                 <strong class="property-value" id="anim-track-keys">—</strong>
                             </div>
+                            <div class="animation-curve-panel" id="anim-curve-panel">
+                                <label class="control-row control-row-select">
+                                    <span class="control-label">混合模式</span>
+                                    <select id="anim-blend-mode" class="select-input">
+                                        <option value="normal">Normal</option>
+                                        <option value="additive">Additive</option>
+                                    </select>
+                                </label>
+                                <label class="control-row control-row-select">
+                                    <span class="control-label">缓动</span>
+                                    <select id="anim-easing" class="select-input">
+                                        <option value="linear">Linear</option>
+                                        <option value="ease-in">Ease In</option>
+                                        <option value="ease-out">Ease Out</option>
+                                        <option value="ease-in-out" selected>Ease In Out</option>
+                                        <option value="custom">Custom</option>
+                                    </select>
+                                </label>
+                                <canvas id="anim-easing-canvas" class="animation-easing-canvas" width="260" height="150" aria-label="缓动曲线"></canvas>
+                                <label class="control-row control-row-select">
+                                    <span class="control-label">Preset</span>
+                                    <select id="anim-easing-preset" class="select-input">
+                                        <option value="custom">Custom</option>
+                                        <option value="linear">Linear</option>
+                                        <option value="ease-in">Ease In</option>
+                                        <option value="ease-out">Ease Out</option>
+                                        <option value="ease-in-out" selected>Ease In Out</option>
+                                    </select>
+                                </label>
+                                <div class="control-actions">
+                                    <button id="btn-apply-anim-easing" class="mini-btn" type="button">应用曲线</button>
+                                </div>
+                            </div>
                             <div class="animation-vector-panel" id="anim-transform-controls">
                                 <div class="vector-input-row">
                                     <label class="vector-input">

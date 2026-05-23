@@ -1,6 +1,7 @@
 // viewer.ts — Three.js 场景封装
 import {
     ACESFilmicToneMapping,
+    AdditiveAnimationBlendMode,
     AnimationAction,
     AnimationClip,
     AnimationMixer,
@@ -25,6 +26,7 @@ import {
     Material,
     Mesh,
     MeshBasicMaterial,
+    NormalAnimationBlendMode,
     NumberKeyframeTrack,
     Object3D,
     PerspectiveCamera,
@@ -180,6 +182,8 @@ export type AnimationTrackVectorEdit = {
     z: number;
 };
 
+export type AnimationEasingCurve = [number, number, number, number];
+export type AnimationBlendMode = 'normal' | 'additive';
 export type BoneTransformMode = 'translate' | 'rotate';
 
 export type SkeletonBoneMeta = {
@@ -282,6 +286,7 @@ export class Viewer {
     private animationPlaying = false;
     private animationSpeed = 1;
     private animationLoop = true;
+    private animationBlendMode: AnimationBlendMode = 'normal';
     private animationFinished = false;
     private lastReportedTime = -1;
 
@@ -1665,6 +1670,31 @@ export class Viewer {
         this.refreshActiveAnimationAfterEdit(this.activeClipIndex);
     }
 
+    applyAnimationTrackEasing(
+        trackIndex: number,
+        curve: AnimationEasingCurve,
+        options: { selectedTimes?: number[]; samples?: number } = {},
+    ): boolean {
+        const clip = this.animClips[this.activeClipIndex];
+        const track = clip?.tracks[trackIndex];
+        if (!clip || !track) return false;
+
+        const meta = buildAnimationTrackMeta(track, trackIndex);
+        if (!meta.editable || track.times.length < 2) return false;
+
+        const eased = bakeEasingIntoTrack(track, curve, {
+            selectedTimes: options.selectedTimes ?? [],
+            samples: options.samples ?? 12,
+        });
+        if (eased === track) return false;
+
+        clip.tracks[trackIndex] = eased;
+        this.refreshAnimationClipMetas();
+        this.refreshActiveAnimationAfterEdit(this.activeClipIndex);
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+        return true;
+    }
+
     selectAnimationClip(index: number, opts: { autoPlay?: boolean } = {}): void {
         if (!this.mixer) return;
         if (index < 0 || index >= this.animClips.length) return;
@@ -1682,6 +1712,7 @@ export class Viewer {
         const action = this.mixer.clipAction(clip);
         action.reset();
         this.applyLoopToAction(action);
+        this.applyBlendModeToAction(action);
         action.timeScale = this.animationSpeed;
         action.paused = !autoPlay;
         action.play();
@@ -1756,9 +1787,20 @@ export class Viewer {
         this.onAnimationsChanged(this.getAnimationState());
     }
 
+    setAnimationBlendMode(mode: AnimationBlendMode): void {
+        this.animationBlendMode = mode;
+        if (this.activeAction) this.applyBlendModeToAction(this.activeAction);
+    }
+
     private applyLoopToAction(action: AnimationAction): void {
         action.setLoop(this.animationLoop ? LoopRepeat : LoopOnce, this.animationLoop ? Infinity : 1);
         action.clampWhenFinished = !this.animationLoop;
+    }
+
+    private applyBlendModeToAction(action: AnimationAction): void {
+        action.blendMode = this.animationBlendMode === 'additive'
+            ? AdditiveAnimationBlendMode
+            : NormalAnimationBlendMode;
     }
 
     private attachAnimations(object: Object3D): void {
@@ -2408,6 +2450,92 @@ function cloneTrackWithData(track: KeyframeTrack, times: number[], values: numbe
         (next as unknown as { setInterpolation?: (value: number) => void }).setInterpolation?.(interpolation);
     }
     return next;
+}
+
+function bakeEasingIntoTrack(
+    track: KeyframeTrack,
+    curve: AnimationEasingCurve,
+    options: { selectedTimes: number[]; samples: number },
+): KeyframeTrack {
+    const times = Array.from(track.times as ArrayLike<number>);
+    const values = Array.from(track.values as ArrayLike<number>);
+    const valueSize = track.getValueSize();
+    if (times.length < 2 || valueSize <= 0) return track;
+
+    const selectedTimes = options.selectedTimes
+        .map((time) => Number(time.toFixed(4)))
+        .filter(Number.isFinite);
+    const selected = new Set(selectedTimes.map((time) => time.toFixed(4)));
+    const applyAll = selected.size === 0;
+    const samples = Math.max(4, Math.min(32, Math.round(options.samples)));
+    const property = parseAnimationTrackName(track.name).property;
+
+    let changed = false;
+    const nextTimes: number[] = [times[0]];
+    const nextValues: number[] = values.slice(0, valueSize);
+
+    for (let index = 0; index < times.length - 1; index += 1) {
+        const t0 = times[index];
+        const t1 = times[index + 1];
+        const v0 = values.slice(index * valueSize, index * valueSize + valueSize);
+        const v1 = values.slice((index + 1) * valueSize, (index + 1) * valueSize + valueSize);
+        const shouldEase = applyAll
+            || selected.has(Number(t0.toFixed(4)).toFixed(4))
+            || selected.has(Number(t1.toFixed(4)).toFixed(4));
+
+        if (shouldEase && t1 > t0 + 1e-5) {
+            changed = true;
+            for (let sample = 1; sample < samples; sample += 1) {
+                const x = sample / samples;
+                const alpha = cubicBezierYForX(x, curve);
+                nextTimes.push(t0 + (t1 - t0) * x);
+                nextValues.push(...interpolateTrackValue(property, v0, v1, alpha));
+            }
+        }
+
+        nextTimes.push(t1);
+        nextValues.push(...v1);
+    }
+
+    if (!changed) return track;
+    return cloneTrackWithData(track, nextTimes, nextValues);
+}
+
+function interpolateTrackValue(
+    property: AnimationTrackProperty,
+    from: number[],
+    to: number[],
+    alpha: number,
+): number[] {
+    if (property === 'quaternion' && from.length >= 4 && to.length >= 4) {
+        const q0 = new Quaternion(from[0], from[1], from[2], from[3]);
+        const q1 = new Quaternion(to[0], to[1], to[2], to[3]);
+        q0.slerp(q1, alpha);
+        return [q0.x, q0.y, q0.z, q0.w];
+    }
+    return from.map((value, index) => value + ((to[index] ?? value) - value) * alpha);
+}
+
+function cubicBezierYForX(x: number, curve: AnimationEasingCurve): number {
+    const [x1, y1, x2, y2] = curve.map((value) => Math.max(0, Math.min(1, value))) as AnimationEasingCurve;
+    let low = 0;
+    let high = 1;
+    let t = x;
+    for (let index = 0; index < 16; index += 1) {
+        t = (low + high) / 2;
+        const estimate = cubicBezier(t, 0, x1, x2, 1);
+        if (estimate < x) low = t;
+        else high = t;
+    }
+    return cubicBezier(t, 0, y1, y2, 1);
+}
+
+function cubicBezier(t: number, p0: number, p1: number, p2: number, p3: number): number {
+    const inv = 1 - t;
+    return inv * inv * inv * p0
+        + 3 * inv * inv * t * p1
+        + 3 * inv * t * t * p2
+        + t * t * t * p3;
 }
 
 function createTrackFromSnapshot(name: string, times: number[], values: number[]): KeyframeTrack {

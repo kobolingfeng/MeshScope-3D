@@ -840,6 +840,26 @@ summary:focus-visible,
     word-break: break-word;
 }
 
+.animation-curve-panel {
+    display: grid;
+    gap: 9px;
+    padding: 10px;
+    border: 1px solid var(--line-base);
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.56);
+}
+
+.animation-easing-canvas {
+    width: 100%;
+    height: 150px;
+    display: block;
+    border: 1px solid var(--line-base);
+    border-radius: 8px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.82), rgba(248,250,252,0.72));
+    cursor: crosshair;
+    touch-action: none;
+}
+
 .stats-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));

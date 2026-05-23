@@ -1,6 +1,8 @@
 import { BoxGeometry, Mesh, MeshStandardMaterial, type Object3D } from 'three';
 import {
+    type AnimationBlendMode,
     type AnimationClipSnapshot,
+    type AnimationEasingCurve,
     type AnimationEditorState,
     type AnimationPlaybackState,
     type AnimationTrackMeta,
@@ -28,6 +30,7 @@ type SaveChoice = {
     destination: SaveDestination;
     animationScope: AnimationExportScope;
 };
+type AnimationEasingName = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'custom';
 type UvSelectionMode = 'vertex' | 'edge' | 'face';
 type UvEdgeState = {
     id: string;
@@ -296,6 +299,12 @@ const animTrackCount = $('anim-track-count');
 const animTrackSelect = $<HTMLSelectElement>('anim-track-select');
 const animTrackType = $('anim-track-type');
 const animTrackKeys = $('anim-track-keys');
+const animCurvePanel = $('anim-curve-panel');
+const animBlendModeSelect = $<HTMLSelectElement>('anim-blend-mode');
+const animEasingSelect = $<HTMLSelectElement>('anim-easing');
+const animEasingCanvas = $<HTMLCanvasElement>('anim-easing-canvas');
+const animEasingPresetSelect = $<HTMLSelectElement>('anim-easing-preset');
+const btnApplyAnimEasing = $<HTMLButtonElement>('btn-apply-anim-easing');
 const animTransformControls = $('anim-transform-controls');
 const animEditXLabel = $('anim-edit-x-label');
 const animEditYLabel = $('anim-edit-y-label');
@@ -313,6 +322,13 @@ type BonePoseClipboard = {
     position: [number, number, number];
     quaternion: [number, number, number, number];
     scale: [number, number, number];
+};
+
+const ANIMATION_EASING_CURVES: Record<Exclude<AnimationEasingName, 'custom'>, AnimationEasingCurve> = {
+    linear: [0, 0, 1, 1],
+    'ease-in': [0.42, 0, 1, 1],
+    'ease-out': [0, 0, 0.58, 1],
+    'ease-in-out': [0.42, 0, 0.58, 1],
 };
 
 let bonePoseClipboard: BonePoseClipboard | null = null;
@@ -335,6 +351,8 @@ let timelineSnapEnabled = true;
 let timelineFps = 30;
 let timelineRetimePreviewDelta = 0;
 let statsRefreshRaf = 0;
+let animationEasingCurve: AnimationEasingCurve = [...ANIMATION_EASING_CURVES['ease-in-out']];
+let animationEasingDragHandle: 1 | 2 | null = null;
 
 const timelineDragState: {
     active: boolean;
@@ -1419,6 +1437,23 @@ function setupAnimationControls(): void {
         syncAnimationTrackControls(viewer.getAnimationEditorState(), { resetInputs: true });
     });
 
+    animBlendModeSelect.addEventListener('change', () => {
+        viewer.setAnimationBlendMode(animBlendModeSelect.value as AnimationBlendMode);
+    });
+
+    animEasingSelect.addEventListener('change', () => {
+        setAnimationEasingByName(animEasingSelect.value as AnimationEasingName);
+    });
+
+    animEasingPresetSelect.addEventListener('change', () => {
+        setAnimationEasingByName(animEasingPresetSelect.value as AnimationEasingName);
+    });
+
+    animEasingCanvas.addEventListener('pointerdown', handleAnimationCurvePointerDown);
+    animEasingCanvas.addEventListener('pointermove', handleAnimationCurvePointerMove);
+    animEasingCanvas.addEventListener('pointerup', finishAnimationCurveDrag);
+    animEasingCanvas.addEventListener('pointercancel', finishAnimationCurveDrag);
+
     animLoopInput.addEventListener('change', () => {
         viewer.setAnimationLoop(animLoopInput.checked);
     });
@@ -1458,6 +1493,10 @@ function setupAnimationControls(): void {
 
     btnApplyAnimTransform.addEventListener('click', () => {
         applySelectedAnimationTrackEdit();
+    });
+
+    btnApplyAnimEasing.addEventListener('click', () => {
+        applySelectedAnimationEasing();
     });
 
     bindNumericPair(animTimeScaleRange, animTimeScaleInput, () => undefined);
@@ -2210,15 +2249,21 @@ function syncAnimationTrackControls(
     if (!track) {
         animTrackType.textContent = '—';
         animTrackKeys.textContent = '—';
+        animCurvePanel.hidden = true;
+        btnApplyAnimEasing.disabled = true;
         animTransformControls.hidden = true;
         btnApplyAnimTransform.disabled = true;
+        renderAnimationCurveEditor();
         return;
     }
 
     animTrackType.textContent = `${track.target} / ${track.propertyLabel}`;
     animTrackKeys.textContent = String(track.keyframes);
+    animCurvePanel.hidden = false;
+    btnApplyAnimEasing.disabled = !track.editable || track.keyframes < 2;
     animTransformControls.hidden = !track.editable;
     btnApplyAnimTransform.disabled = !track.editable;
+    renderAnimationCurveEditor();
     if (options.resetInputs) resetAnimationTrackEditInputs(track);
 }
 
@@ -2268,6 +2313,189 @@ function applySelectedAnimationTrackEdit(): void {
     });
     resetAnimationTrackEditInputs(track);
     showToast('骨骼动画轨道已更新', 'success');
+}
+
+function setAnimationEasingByName(name: AnimationEasingName): void {
+    if (name !== 'custom') {
+        animationEasingCurve = [...ANIMATION_EASING_CURVES[name]];
+    }
+    animEasingSelect.value = name;
+    animEasingPresetSelect.value = name;
+    renderAnimationCurveEditor();
+}
+
+function markAnimationEasingCustom(): void {
+    animEasingSelect.value = 'custom';
+    animEasingPresetSelect.value = 'custom';
+}
+
+function applySelectedAnimationEasing(): void {
+    const state = viewer.getAnimationEditorState();
+    const track = state.tracks.find((item) => item.index === selectedAnimationTrackIndex);
+    if (!track?.editable || track.keyframes < 2) {
+        showToast('需要选择至少 2 个关键帧的可编辑轨道', 'info');
+        return;
+    }
+
+    const selectedTimes = selectedKeyframeTimes.length > 0 ? selectedKeyframeTimes : [];
+    let changed = false;
+    runAnimationEdit('动画缓动曲线', () => {
+        changed = viewer.applyAnimationTrackEasing(track.index, animationEasingCurve, { selectedTimes });
+    });
+    syncAnimationTrackControls(viewer.getAnimationEditorState());
+    renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+    showToast(
+        changed
+            ? (selectedTimes.length > 0 ? '已应用到选中关键帧区间' : '已应用到当前轨道')
+            : '没有可应用的关键帧区间',
+        changed ? 'success' : 'info',
+    );
+}
+
+function renderAnimationCurveEditor(): void {
+    const canvas = animEasingCanvas;
+    const rect = canvas.getBoundingClientRect();
+    const cssWidth = Math.max(220, Math.round(rect.width || canvas.clientWidth || 260));
+    const cssHeight = Math.max(130, Math.round(rect.height || 150));
+    const dpr = window.devicePixelRatio || 1;
+    if (canvas.width !== Math.round(cssWidth * dpr) || canvas.height !== Math.round(cssHeight * dpr)) {
+        canvas.width = Math.round(cssWidth * dpr);
+        canvas.height = Math.round(cssHeight * dpr);
+    }
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+
+    const pad = 14;
+    const plotW = cssWidth - pad * 2;
+    const plotH = cssHeight - pad * 2;
+    const toPoint = (x: number, y: number) => ({
+        x: pad + x * plotW,
+        y: pad + (1 - y) * plotH,
+    });
+
+    ctx.strokeStyle = 'rgba(94, 109, 126, 0.16)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 6; i += 1) {
+        const p = pad + (i / 6) * plotW;
+        ctx.beginPath();
+        ctx.moveTo(p, pad);
+        ctx.lineTo(p, pad + plotH);
+        ctx.stroke();
+        const y = pad + (i / 6) * plotH;
+        ctx.beginPath();
+        ctx.moveTo(pad, y);
+        ctx.lineTo(pad + plotW, y);
+        ctx.stroke();
+    }
+
+    const p0 = toPoint(0, 0);
+    const p1 = toPoint(animationEasingCurve[0], animationEasingCurve[1]);
+    const p2 = toPoint(animationEasingCurve[2], animationEasingCurve[3]);
+    const p3 = toPoint(1, 1);
+
+    ctx.strokeStyle = 'rgba(47, 111, 179, 0.26)';
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y);
+    ctx.lineTo(p1.x, p1.y);
+    ctx.moveTo(p3.x, p3.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#3a86ff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y);
+    ctx.bezierCurveTo(p1.x, p1.y, p2.x, p2.y, p3.x, p3.y);
+    ctx.stroke();
+
+    for (const point of [p0, p3]) {
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = '#3a86ff';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+    }
+    for (const point of [p1, p2]) {
+        ctx.fillStyle = '#ffffff';
+        ctx.strokeStyle = '#7fb2ff';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+    }
+}
+
+function handleAnimationCurvePointerDown(event: PointerEvent): void {
+    const handle = getAnimationCurveHandleAt(event.clientX, event.clientY);
+    if (!handle) return;
+    animationEasingDragHandle = handle;
+    animEasingCanvas.setPointerCapture(event.pointerId);
+    updateAnimationCurveHandle(event);
+    event.preventDefault();
+}
+
+function handleAnimationCurvePointerMove(event: PointerEvent): void {
+    if (!animationEasingDragHandle) return;
+    updateAnimationCurveHandle(event);
+    event.preventDefault();
+}
+
+function finishAnimationCurveDrag(event: PointerEvent): void {
+    if (!animationEasingDragHandle) return;
+    animationEasingDragHandle = null;
+    if (animEasingCanvas.hasPointerCapture(event.pointerId)) {
+        animEasingCanvas.releasePointerCapture(event.pointerId);
+    }
+}
+
+function getAnimationCurveHandleAt(clientX: number, clientY: number): 1 | 2 | null {
+    const points = getAnimationCurveCanvasPoints();
+    const d1 = Math.hypot(clientX - points.p1.x, clientY - points.p1.y);
+    const d2 = Math.hypot(clientX - points.p2.x, clientY - points.p2.y);
+    const radius = 16;
+    if (d1 <= radius || d2 <= radius) return d1 <= d2 ? 1 : 2;
+    return null;
+}
+
+function updateAnimationCurveHandle(event: PointerEvent): void {
+    if (!animationEasingDragHandle) return;
+    const rect = animEasingCanvas.getBoundingClientRect();
+    const pad = 14;
+    const plotW = Math.max(1, rect.width - pad * 2);
+    const plotH = Math.max(1, rect.height - pad * 2);
+    const x = clamp((event.clientX - rect.left - pad) / plotW, 0, 1);
+    const y = clamp(1 - ((event.clientY - rect.top - pad) / plotH), 0, 1);
+    if (animationEasingDragHandle === 1) {
+        animationEasingCurve = [x, y, animationEasingCurve[2], animationEasingCurve[3]];
+    } else {
+        animationEasingCurve = [animationEasingCurve[0], animationEasingCurve[1], x, y];
+    }
+    markAnimationEasingCustom();
+    renderAnimationCurveEditor();
+}
+
+function getAnimationCurveCanvasPoints(): {
+    p1: { x: number; y: number };
+    p2: { x: number; y: number };
+} {
+    const rect = animEasingCanvas.getBoundingClientRect();
+    const pad = 14;
+    const plotW = Math.max(1, rect.width - pad * 2);
+    const plotH = Math.max(1, rect.height - pad * 2);
+    const toPoint = (x: number, y: number) => ({
+        x: rect.left + pad + x * plotW,
+        y: rect.top + pad + (1 - y) * plotH,
+    });
+    return {
+        p1: toPoint(animationEasingCurve[0], animationEasingCurve[1]),
+        p2: toPoint(animationEasingCurve[2], animationEasingCurve[3]),
+    };
 }
 
 function normalizeAnimationScaleInput(value: number): number {
