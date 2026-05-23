@@ -1,0 +1,4789 @@
+import { BoxGeometry, Mesh, MeshStandardMaterial, type Object3D } from 'three';
+import {
+    type AnimationClipSnapshot,
+    type AnimationEditorState,
+    type AnimationPlaybackState,
+    type AnimationTrackMeta,
+    type BoneTransformMode,
+    type MaterialEditMode,
+    type MaterialEditSnapshot,
+    type SkeletonEditorState,
+    type TextureSlotId,
+    type TextureSlotState,
+    type TextureTransform,
+    type UvEditorState,
+    Viewer,
+} from './viewer';
+import { ACCEPT_EXTS, extOf, isSupported, loadFromFiles, loadFromPath } from './loaders';
+import { app, dialog, fs, win } from './api';
+import { inNative } from './ipc';
+import { extractModelPathsFromUrls } from './launch';
+
+type InspectorTab = 'overview' | 'properties' | 'animation' | 'textures';
+type ContentMode = 'model' | 'uv';
+type UvSelectionMode = 'vertex' | 'edge' | 'face';
+type UvEdgeState = {
+    id: string;
+    a: number;
+    b: number;
+    islandId: number;
+};
+
+type UvScreenTransform = {
+    width: number;
+    height: number;
+    axisScale: {
+        x: number;
+        y: number;
+        min: number;
+    };
+};
+
+type UvTexturePatternMode = 'repeat' | 'no-repeat';
+
+type TextureTransformSnapshot = {
+    slot: TextureSlotId;
+    transform: TextureTransform;
+};
+
+type UvPointSnapshot = {
+    pointId: number;
+    x: number;
+    y: number;
+};
+
+type UvSelectionSnapshot = {
+    mode: UvSelectionMode;
+    pointIds: number[];
+    edgeIds: string[];
+    faceIds: number[];
+};
+
+type UndoEntry =
+    | {
+        kind: 'material';
+        label: string;
+        snapshot: MaterialEditSnapshot;
+    }
+    | {
+        kind: 'texture';
+        label: string;
+        snapshot: TextureTransformSnapshot;
+    }
+    | {
+        kind: 'uv';
+        label: string;
+        snapshot: UvPointSnapshot[];
+        selection: UvSelectionSnapshot;
+    }
+    | {
+        kind: 'uv-selection';
+        label: string;
+        selection: UvSelectionSnapshot;
+    }
+    | {
+        kind: 'animation';
+        label: string;
+        snapshot: AnimationClipSnapshot;
+    };
+
+type DocumentSession = {
+    id: string;
+    name: string;
+    root: Object3D;
+    kind: 'sample' | 'model';
+    sourcePath?: string;
+    dirty: boolean;
+    undoStack: UndoEntry[];
+    redoStack: UndoEntry[];
+};
+
+type LayoutState = {
+    inspectorWidth: number;
+    activeTab: InspectorTab;
+    contentMode: ContentMode;
+    groups: Record<string, boolean>;
+};
+
+const LAYOUT_KEY = 'portable-3d-viewer.layout.v7';
+const MAX_UNDO_STEPS = 80;
+const DEFAULT_LAYOUT: LayoutState = {
+    inspectorWidth: 336,
+    activeTab: 'overview',
+    contentMode: 'model',
+    groups: {
+        runtime: true,
+        stats: true,
+        document: true,
+        camera: true,
+        material: true,
+        textures: true,
+        'uv-mapping': true,
+        animation: true,
+    },
+};
+
+const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
+    document.getElementById(id) as T;
+
+const root = document.documentElement;
+const titlebar = $('titlebar');
+const viewport = $('viewport');
+const uvWorkspace = $('uv-workspace');
+const canvas = $<HTMLCanvasElement>('canvas');
+const fileInput = $<HTMLInputElement>('file-input');
+const loading = $('loading');
+const loadingText = $('loading-text');
+const toast = $('toast');
+const documentTabs = $('document-tabs');
+const rightResizer = $('right-resizer');
+
+const btnOpen = $<HTMLButtonElement>('btn-open');
+const btnSave = $<HTMLButtonElement>('btn-save');
+const btnSaveAs = $<HTMLButtonElement>('btn-save-as');
+const btnReset = $<HTMLButtonElement>('btn-reset');
+const btnClear = $<HTMLButtonElement>('btn-clear');
+const btnUndo = $<HTMLButtonElement>('btn-undo');
+const btnRedo = $<HTMLButtonElement>('btn-redo');
+const btnResetLayout = $<HTMLButtonElement>('btn-reset-layout');
+const btnModeModel = $<HTMLButtonElement>('btn-mode-model');
+const btnModeUv = $<HTMLButtonElement>('btn-mode-uv');
+const btnOpenUvWorkspace = $<HTMLButtonElement>('btn-open-uv-workspace');
+const btnOpenUvTab = $<HTMLButtonElement>('btn-open-uv-tab');
+
+const togWire = $<HTMLInputElement>('tog-wire');
+const togGrid = $<HTMLInputElement>('tog-grid');
+const togAxes = $<HTMLInputElement>('tog-axes');
+const togBg = $<HTMLInputElement>('tog-bg');
+
+const toolbarSceneState = $('toolbar-scene-state');
+const titlebarSceneState = $('titlebar-scene-state');
+const toolbarFps = $('toolbar-fps');
+const toolbarModelName = $('toolbar-model-name');
+
+const sceneState = $('scene-state');
+const fpsEl = $('fps');
+const modelName = $('model-name');
+
+const statVerts = $('stat-verts');
+const statFaces = $('stat-faces');
+const statEdges = $('stat-edges');
+const statMeshes = $('stat-meshes');
+
+const propDocName = $('prop-doc-name');
+const propDocState = $('prop-doc-state');
+const propDocCount = $('prop-doc-count');
+const propBounds = $('prop-bounds');
+const propCenter = $('prop-center');
+const propCameraPos = $('prop-camera-pos');
+const propCameraTarget = $('prop-camera-target');
+
+const cameraFovRange = $<HTMLInputElement>('camera-fov-range');
+const cameraFovInput = $<HTMLInputElement>('camera-fov-input');
+const cameraExposureRange = $<HTMLInputElement>('camera-exposure-range');
+const cameraExposureInput = $<HTMLInputElement>('camera-exposure-input');
+
+const matVisible = $<HTMLInputElement>('mat-visible');
+const matMode = $<HTMLSelectElement>('mat-mode');
+const matOpacityRange = $<HTMLInputElement>('mat-opacity-range');
+const matOpacityInput = $<HTMLInputElement>('mat-opacity-input');
+const matColorInput = $<HTMLInputElement>('mat-color-input');
+const matRoughnessRange = $<HTMLInputElement>('mat-roughness-range');
+const matRoughnessInput = $<HTMLInputElement>('mat-roughness-input');
+const matMetalnessRange = $<HTMLInputElement>('mat-metalness-range');
+const matMetalnessInput = $<HTMLInputElement>('mat-metalness-input');
+const matFlat = $<HTMLInputElement>('mat-flat');
+const matDoubleSided = $<HTMLInputElement>('mat-double-sided');
+const btnResetMaterial = $<HTMLButtonElement>('btn-reset-material');
+
+const textureEmpty = $('texture-empty');
+const textureBrowser = $('texture-browser');
+const textureList = $('texture-list');
+const uvEditorFrame = $('uv-editor-frame');
+const uvEditorCanvas = $<HTMLCanvasElement>('uv-editor-canvas');
+const uvEditorEmpty = $('uv-editor-empty');
+const uvEditorStatus = $('uv-editor-status');
+const uvSelectVertex = $<HTMLButtonElement>('uv-select-vertex');
+const uvSelectEdge = $<HTMLButtonElement>('uv-select-edge');
+const uvSelectFace = $<HTMLButtonElement>('uv-select-face');
+const uvSnapEnabledInput = $<HTMLInputElement>('uv-snap-enabled');
+const uvSnapStrengthRange = $<HTMLInputElement>('uv-snap-strength-range');
+const uvSnapStrengthInput = $<HTMLInputElement>('uv-snap-strength-input');
+const texSlotName = $('tex-slot-name');
+const texDimensions = $('tex-dimensions');
+const texSourceName = $('tex-source-name');
+const texOffsetXRange = $<HTMLInputElement>('tex-offset-x-range');
+const texOffsetXInput = $<HTMLInputElement>('tex-offset-x-input');
+const texOffsetYRange = $<HTMLInputElement>('tex-offset-y-range');
+const texOffsetYInput = $<HTMLInputElement>('tex-offset-y-input');
+const texRepeatXRange = $<HTMLInputElement>('tex-repeat-x-range');
+const texRepeatXInput = $<HTMLInputElement>('tex-repeat-x-input');
+const texRepeatYRange = $<HTMLInputElement>('tex-repeat-y-range');
+const texRepeatYInput = $<HTMLInputElement>('tex-repeat-y-input');
+const texRotationRange = $<HTMLInputElement>('tex-rotation-range');
+const texRotationInput = $<HTMLInputElement>('tex-rotation-input');
+const btnResetTextureTransform = $<HTMLButtonElement>('btn-reset-texture-transform');
+
+const animBar = $('anim-bar');
+const animPlayBtn = $<HTMLButtonElement>('anim-play');
+const animStopBtn = $<HTMLButtonElement>('anim-stop');
+const animClipSelect = $<HTMLSelectElement>('anim-clip');
+const animEditOpenBtn = $<HTMLButtonElement>('anim-edit-open');
+const animTimeRange = $<HTMLInputElement>('anim-time');
+const animTimeLabel = $('anim-time-label');
+const animLoopInput = $<HTMLInputElement>('anim-loop');
+const animSpeedInput = $<HTMLInputElement>('anim-speed');
+const animSummary = $('anim-summary');
+const animEditorEmpty = $('anim-editor-empty');
+const animEditor = $('anim-editor');
+const animShowSkeletonInput = $<HTMLInputElement>('anim-show-skeleton');
+const animBoneSelect = $<HTMLSelectElement>('anim-bone-select');
+const animSelectedBone = $('anim-selected-bone');
+const animModeTranslate = $<HTMLButtonElement>('anim-mode-translate');
+const animModeRotate = $<HTMLButtonElement>('anim-mode-rotate');
+const animIkEnabledInput = $<HTMLInputElement>('anim-ik-enabled');
+const animKeyframeStrip = $('anim-keyframe-strip');
+const btnInsertKeyframe = $<HTMLButtonElement>('btn-insert-keyframe');
+const btnDeleteKeyframe = $<HTMLButtonElement>('btn-delete-keyframe');
+const animClipNameInput = $<HTMLInputElement>('anim-clip-name');
+const animClipDuration = $('anim-clip-duration');
+const animTrackCount = $('anim-track-count');
+const animTrackSelect = $<HTMLSelectElement>('anim-track-select');
+const animTrackType = $('anim-track-type');
+const animTrackKeys = $('anim-track-keys');
+const animTransformControls = $('anim-transform-controls');
+const animEditXLabel = $('anim-edit-x-label');
+const animEditYLabel = $('anim-edit-y-label');
+const animEditZLabel = $('anim-edit-z-label');
+const animEditXInput = $<HTMLInputElement>('anim-edit-x');
+const animEditYInput = $<HTMLInputElement>('anim-edit-y');
+const animEditZInput = $<HTMLInputElement>('anim-edit-z');
+const btnApplyAnimTransform = $<HTMLButtonElement>('btn-apply-anim-transform');
+const animTimeScaleRange = $<HTMLInputElement>('anim-time-scale-range');
+const animTimeScaleInput = $<HTMLInputElement>('anim-time-scale-input');
+const btnApplyAnimTimeScale = $<HTMLButtonElement>('btn-apply-anim-time-scale');
+
+const inspectorTabs = Array.from(document.querySelectorAll<HTMLButtonElement>('.inspector-tab'));
+const inspectorViews = Array.from(document.querySelectorAll<HTMLElement>('.inspector-view'));
+const inspectorGroups = Array.from(document.querySelectorAll<HTMLDetailsElement>('.inspector-group'));
+
+const sceneStateEls = [titlebarSceneState, toolbarSceneState, sceneState];
+const fpsEls = [toolbarFps, fpsEl];
+const modelNameEls = [toolbarModelName, modelName];
+
+let animTimeRangeSyncing = false;
+let selectedAnimationTrackIndex = -1;
+
+const viewer = new Viewer(canvas);
+
+let layoutState = loadLayout();
+let documents: DocumentSession[] = [createSampleDocument()];
+let activeDocumentId = documents[0].id;
+let toastTimer = 0;
+let loadingMessage = '';
+let loadingCount = 0;
+let lastPropertySyncTs = 0;
+let nativeOpenQueue = Promise.resolve();
+let selectedTextureSlot: TextureSlotId | null = null;
+let currentTextureSlotState: TextureSlotState | null = null;
+let currentUvEditorState: UvEditorState | null = null;
+let currentUvEdges: UvEdgeState[] = [];
+const currentUvEdgeMap = new Map<string, UvEdgeState>();
+let suppressUndoRecording = false;
+let uvSelectionMode: UvSelectionMode = 'vertex';
+let uvSnapEnabled = true;
+let uvSnapStrength = 1;
+let materialEditFrame = 0;
+const pendingMaterialEdit: {
+    opacity?: number;
+    roughness?: number;
+    metalness?: number;
+    color?: string;
+} = {};
+const selectedUvPointIds = new Set<number>();
+const selectedUvEdgeIds = new Set<string>();
+const selectedUvFaceIds = new Set<number>();
+const previewUvPointIds = new Set<number>();
+const previewUvEdgeIds = new Set<string>();
+const previewUvFaceIds = new Set<number>();
+
+const uvView = {
+    centerX: 0.5,
+    centerY: 0.5,
+    zoom: 1,
+};
+
+let uvTexturePatternSource: CanvasImageSource | null = null;
+let uvTexturePattern: CanvasPattern | null = null;
+let uvTexturePatternMode: UvTexturePatternMode = 'no-repeat';
+
+const materialUndoDraft: {
+    snapshot: MaterialEditSnapshot | null;
+    label: string;
+} = {
+    snapshot: null,
+    label: '',
+};
+
+const textureUndoDraft: {
+    snapshot: TextureTransformSnapshot | null;
+    label: string;
+} = {
+    snapshot: null,
+    label: '',
+};
+
+const uvWheelUndoDraft: {
+    snapshot: UvPointSnapshot[] | null;
+    selection: UvSelectionSnapshot | null;
+    label: string;
+    timer: number;
+} = {
+    snapshot: null,
+    selection: null,
+    label: '',
+    timer: 0,
+};
+
+const uvDragState: {
+    mode: 'idle' | 'pan' | 'move-selection' | 'box-select' | 'scale-selection' | 'rotate-selection';
+    pointerId: number | null;
+    startClientX: number;
+    startClientY: number;
+    startCenterX: number;
+    startCenterY: number;
+    startUvX: number;
+    startUvY: number;
+    startSelection: Array<{ pointId: number; x: number; y: number }>;
+    additive: boolean;
+    subtractive: boolean;
+    moved: boolean;
+    boxStartX: number;
+    boxStartY: number;
+    boxCurrentX: number;
+    boxCurrentY: number;
+    transformPivotX: number;
+    transformPivotY: number;
+    transformStartAngle: number;
+    transformHandle: SelectionHandleType | null;
+} = {
+    mode: 'idle',
+    pointerId: null,
+    startClientX: 0,
+    startClientY: 0,
+    startCenterX: 0.5,
+    startCenterY: 0.5,
+    startUvX: 0,
+    startUvY: 0,
+    startSelection: [],
+    additive: false,
+    subtractive: false,
+    moved: false,
+    boxStartX: 0,
+    boxStartY: 0,
+    boxCurrentX: 0,
+    boxCurrentY: 0,
+    transformPivotX: 0,
+    transformPivotY: 0,
+    transformStartAngle: 0,
+    transformHandle: null,
+};
+
+type SelectionHandleType =
+    | 'scale-nw'
+    | 'scale-ne'
+    | 'scale-se'
+    | 'scale-sw'
+    | 'rotate';
+
+viewer.onFps = (fps) => {
+    setText(fpsEls, fps.toFixed(0));
+};
+
+viewer.onRender = () => {
+    const now = performance.now();
+    if (now - lastPropertySyncTs < 120) return;
+    lastPropertySyncTs = now;
+    syncPropertyPanelCamera();
+};
+
+viewer.onAnimationsChanged = (state) => {
+    refreshAnimationBar(state);
+    syncAnimationEditor();
+};
+
+viewer.onSkeletonChanged = () => {
+    syncAnimationEditor();
+};
+
+viewer.onBonePoseEdited = () => {
+    syncAnimationEditor();
+};
+
+viewer.onAnimationTick = (state) => {
+    syncAnimationProgress(state);
+    renderAnimationTimeline(viewer.getSkeletonEditorState(), state);
+};
+
+applyLayout();
+void bootstrap();
+
+async function bootstrap(): Promise<void> {
+    await setupTitlebar();
+    setupLayoutControls();
+    setupContentModeControls();
+    setupInspector();
+    setupDocumentTabs();
+    setupFileInput();
+    setupViewportDrop();
+    setupDisplayToggles();
+    setupPropertyControls();
+    setupTextureControls();
+    setupUvEditor();
+    setupUndoShortcuts();
+    setupAnimationControls();
+    setupNativeLaunchOpen();
+
+    viewer.setWireframe(togWire.checked);
+    viewer.setGridVisible(togGrid.checked);
+    viewer.setAxesVisible(togAxes.checked);
+    viewer.setLightBackground(togBg.checked);
+    loading.hidden = true;
+
+    activateDocument(activeDocumentId, { fit: false });
+    syncMaterialControls();
+    syncTextureInspector();
+    syncAnimationEditor();
+    syncPropertyPanelCamera();
+
+    if (inNative) {
+        void app.registerFileAssociations(ACCEPT_EXTS).catch((error) => {
+            console.error('registerFileAssociations failed', error);
+        });
+
+        const launchFiles = await app.consumeLaunchFiles().catch(() => [] as string[]);
+        if (launchFiles.length > 0) {
+            await enqueueNativePathLoad(launchFiles);
+        }
+
+        const launchUrls = await app.consumeLaunchUrls().catch(() => [] as string[]);
+        if (launchUrls.length > 0) {
+            await handleOpenUrls(launchUrls);
+        }
+    }
+
+    requestAnimationFrame(() => document.body.classList.add('ready'));
+
+    window.addEventListener('beforeunload', () => viewer.dispose());
+}
+
+async function setupTitlebar(): Promise<void> {
+    if (!inNative) {
+        document.body.classList.add('browser');
+        return;
+    }
+
+    const frameless = await win.isFrameless().catch(() => false);
+    if (!frameless) {
+        document.body.classList.add('browser');
+        return;
+    }
+
+    const syncMaximized = async () => {
+        const maximized = await win.isMaximized().catch(() => false);
+        document.body.classList.toggle('window-maximized', maximized);
+    };
+
+    const toggleMaximized = async () => {
+        const maximized = await win.isMaximized().catch(() => false);
+        if (maximized) await win.restore().catch(() => false);
+        else await win.maximize().catch(() => false);
+        await syncMaximized();
+    };
+
+    $('tb-min').addEventListener('click', () => {
+        void win.minimize();
+    });
+    $('tb-max').addEventListener('click', () => {
+        void toggleMaximized();
+    });
+    $('tb-close').addEventListener('click', () => {
+        void win.close();
+    });
+
+    titlebar.addEventListener('mousedown', (event) => {
+        if (event.button !== 0) return;
+        const target = event.target as HTMLElement;
+        if (target.closest('.titlebar-controls, .titlebar-tool')) return;
+        void win.startDrag();
+    });
+
+    titlebar.addEventListener('dblclick', (event) => {
+        const target = event.target as HTMLElement;
+        if (target.closest('.titlebar-controls, .titlebar-tool')) return;
+        void toggleMaximized();
+    });
+
+    setupNativeEdgeResize();
+    win.onResized(() => {
+        void syncMaximized();
+    });
+    await syncMaximized();
+}
+
+function setupNativeEdgeResize(): void {
+    const cursorByEdge: Record<string, string> = {
+        left: 'ew-resize',
+        right: 'ew-resize',
+        top: 'ns-resize',
+        bottom: 'ns-resize',
+        'top-left': 'nwse-resize',
+        'top-right': 'nesw-resize',
+        'bottom-left': 'nesw-resize',
+        'bottom-right': 'nwse-resize',
+    };
+
+    const getEdge = (x: number, y: number): string | null => {
+        const threshold = 8;
+        const left = x <= threshold;
+        const right = window.innerWidth - x <= threshold;
+        const top = y <= threshold;
+        const bottom = window.innerHeight - y <= threshold;
+
+        if (top && left) return 'top-left';
+        if (top && right) return 'top-right';
+        if (bottom && left) return 'bottom-left';
+        if (bottom && right) return 'bottom-right';
+        if (left) return 'left';
+        if (right) return 'right';
+        if (top) return 'top';
+        if (bottom) return 'bottom';
+        return null;
+    };
+
+    document.addEventListener('mousemove', (event) => {
+        if (document.body.classList.contains('resizing-sidebar')) return;
+        const edge = getEdge(event.clientX, event.clientY);
+        document.documentElement.style.cursor = edge ? cursorByEdge[edge] : '';
+    });
+
+    document.addEventListener('mousedown', (event) => {
+        if (event.button !== 0) return;
+        const target = event.target as HTMLElement;
+        if (target.closest('#right-resizer')) return;
+        const edge = getEdge(event.clientX, event.clientY);
+        if (!edge) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        void win.startResize(edge);
+    }, true);
+}
+
+function setupLayoutControls(): void {
+    btnResetLayout.addEventListener('click', () => {
+        layoutState.inspectorWidth = DEFAULT_LAYOUT.inspectorWidth;
+        applyLayout();
+        persistLayout();
+        showToast('右侧面板宽度已重置', 'success');
+    });
+
+    rightResizer.addEventListener('mousedown', (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+
+        const startX = event.clientX;
+        const startWidth = layoutState.inspectorWidth;
+        document.body.classList.add('resizing-sidebar');
+
+        const onMove = (moveEvent: MouseEvent) => {
+            const delta = startX - moveEvent.clientX;
+            layoutState.inspectorWidth = clampInspectorWidth(startWidth + delta);
+            applyLayout();
+        };
+
+        const onUp = () => {
+            document.body.classList.remove('resizing-sidebar');
+            window.removeEventListener('mousemove', onMove);
+            window.removeEventListener('mouseup', onUp);
+            persistLayout();
+        };
+
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+    });
+
+    rightResizer.addEventListener('keydown', (event) => {
+        const step = event.shiftKey ? 32 : 12;
+        if (event.key === 'ArrowLeft') {
+            event.preventDefault();
+            layoutState.inspectorWidth = clampInspectorWidth(layoutState.inspectorWidth + step);
+        } else if (event.key === 'ArrowRight') {
+            event.preventDefault();
+            layoutState.inspectorWidth = clampInspectorWidth(layoutState.inspectorWidth - step);
+        } else if (event.key === 'Home') {
+            event.preventDefault();
+            layoutState.inspectorWidth = clampInspectorWidth(520);
+        } else if (event.key === 'End') {
+            event.preventDefault();
+            layoutState.inspectorWidth = clampInspectorWidth(280);
+        } else {
+            return;
+        }
+        applyLayout();
+        persistLayout();
+    });
+
+    rightResizer.addEventListener('dblclick', () => {
+        layoutState.inspectorWidth = DEFAULT_LAYOUT.inspectorWidth;
+        applyLayout();
+        persistLayout();
+    });
+
+    window.addEventListener('resize', () => {
+        const next = clampInspectorWidth(layoutState.inspectorWidth);
+        if (next === layoutState.inspectorWidth) return;
+        layoutState.inspectorWidth = next;
+        applyLayout();
+        persistLayout();
+    });
+}
+
+function setupContentModeControls(): void {
+    btnModeModel.addEventListener('click', () => {
+        setContentMode('model');
+    });
+
+    btnModeUv.addEventListener('click', () => {
+        setContentMode('uv');
+    });
+
+    btnOpenUvWorkspace.addEventListener('click', () => {
+        setContentMode('uv');
+    });
+
+    btnOpenUvTab.addEventListener('click', () => {
+        layoutState.activeTab = 'textures';
+        applyInspectorState();
+        persistLayout();
+    });
+}
+
+function setupInspector(): void {
+    inspectorTabs.forEach((button) => {
+        button.addEventListener('click', () => {
+            const tab = button.dataset.inspectorTab;
+            if (!isInspectorTab(tab)) return;
+            layoutState.activeTab = tab;
+            applyInspectorState();
+            if (tab === 'animation') viewer.setSkeletonVisible(true);
+            persistLayout();
+        });
+
+        button.addEventListener('keydown', (event) => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+            event.preventDefault();
+            const index = inspectorTabs.indexOf(button);
+            const lastIndex = inspectorTabs.length - 1;
+            const nextIndex = event.key === 'Home'
+                ? 0
+                : event.key === 'End'
+                    ? lastIndex
+                    : event.key === 'ArrowLeft'
+                        ? (index <= 0 ? lastIndex : index - 1)
+                        : (index >= lastIndex ? 0 : index + 1);
+            const nextButton = inspectorTabs[nextIndex];
+            const tab = nextButton?.dataset.inspectorTab;
+            if (!nextButton || !isInspectorTab(tab)) return;
+            layoutState.activeTab = tab;
+            applyInspectorState();
+            if (tab === 'animation') viewer.setSkeletonVisible(true);
+            persistLayout();
+            nextButton.focus();
+        });
+    });
+
+    inspectorGroups.forEach((group) => {
+        group.addEventListener('toggle', () => {
+            const id = group.dataset.groupId;
+            if (!id) return;
+            layoutState.groups[id] = group.open;
+            persistLayout();
+        });
+    });
+
+    applyInspectorState();
+}
+
+function setupDocumentTabs(): void {
+    documentTabs.addEventListener('click', (event) => {
+        const closeButton = (event.target as HTMLElement).closest<HTMLButtonElement>('.document-tab-close');
+        const mainButton = (event.target as HTMLElement).closest<HTMLButtonElement>('.document-tab-main');
+        const id = closeButton?.dataset.documentId ?? mainButton?.dataset.documentId;
+        if (!id) return;
+
+        if (closeButton) {
+            closeDocument(id);
+            return;
+        }
+
+        if (id !== activeDocumentId) activateDocument(id, { fit: true });
+    });
+}
+
+function setupFileInput(): void {
+    const openPicker = async () => {
+        if (inNative) {
+            const selection = await dialog.openFile({
+                filters: [{ name: '3D 模型', extensions: ACCEPT_EXTS }],
+                multiple: true,
+            }).catch(() => null);
+            const paths = typeof selection === 'string'
+                ? [selection]
+                : Array.isArray(selection)
+                    ? selection
+                    : [];
+            if (paths.length > 0) await enqueueNativePathLoad(paths);
+            return;
+        }
+
+        fileInput.value = '';
+        fileInput.click();
+    };
+
+    btnOpen.addEventListener('click', () => {
+        void openPicker();
+    });
+
+    btnSave.addEventListener('click', () => {
+        void saveActiveDocument({ saveAs: false });
+    });
+
+    btnSaveAs.addEventListener('click', () => {
+        void saveActiveDocument({ saveAs: true });
+    });
+
+    fileInput.addEventListener('change', async () => {
+        const files = fileInput.files ? Array.from(fileInput.files) : [];
+        if (files.length > 0) await loadFiles(files);
+    });
+
+    btnReset.addEventListener('click', () => {
+        viewer.resetView();
+        syncPropertyPanelCamera();
+        showToast('视图已重置', 'success');
+    });
+
+    btnClear.addEventListener('click', () => {
+        clearActiveDocument();
+    });
+
+    btnUndo.addEventListener('click', () => {
+        undoLastEdit();
+    });
+
+    btnRedo.addEventListener('click', () => {
+        redoLastEdit();
+    });
+}
+
+function setupNativeLaunchOpen(): void {
+    if (!inNative) return;
+    app.onOpenFiles(({ files }) => {
+        void enqueueNativePathLoad(files);
+    });
+    app.onOpenUrls(({ urls }) => {
+        void handleOpenUrls(urls);
+    });
+}
+
+function setupUndoShortcuts(): void {
+    window.addEventListener('keydown', (event) => {
+        if (event.defaultPrevented) return;
+        if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+        if (isEditableTarget(event.target)) return;
+
+        const key = event.key.toLowerCase();
+        const wantsUndo = key === 'z' && !event.shiftKey;
+        const wantsRedo = key === 'y' || (key === 'z' && event.shiftKey);
+        if (!wantsUndo && !wantsRedo) return;
+
+        event.preventDefault();
+        if (wantsRedo) redoLastEdit();
+        else undoLastEdit();
+    });
+}
+
+function setupAnimationControls(): void {
+    animPlayBtn.addEventListener('click', () => {
+        viewer.toggleAnimation();
+    });
+
+    animStopBtn.addEventListener('click', () => {
+        viewer.seekAnimation(0);
+        viewer.pauseAnimation();
+    });
+
+    animClipSelect.addEventListener('change', () => {
+        const index = Number(animClipSelect.value);
+        if (!Number.isFinite(index)) return;
+        const wasPlaying = viewer.getAnimationState().playing;
+        viewer.selectAnimationClip(index, { autoPlay: wasPlaying });
+    });
+
+    animEditOpenBtn.addEventListener('click', () => {
+        openAnimationInspector();
+    });
+
+    animShowSkeletonInput.addEventListener('change', () => {
+        viewer.setSkeletonVisible(animShowSkeletonInput.checked);
+    });
+
+    animBoneSelect.addEventListener('change', () => {
+        const index = Number(animBoneSelect.value);
+        if (!Number.isFinite(index)) return;
+        viewer.selectBone(index);
+    });
+
+    animModeRotate.addEventListener('click', () => {
+        setBoneTransformMode('rotate');
+    });
+
+    animModeTranslate.addEventListener('click', () => {
+        setBoneTransformMode('translate');
+    });
+
+    animIkEnabledInput.addEventListener('change', () => {
+        viewer.setIkEnabled(animIkEnabledInput.checked);
+    });
+
+    btnInsertKeyframe.addEventListener('click', () => {
+        runAnimationEdit('插入关键帧', () => {
+            viewer.insertSelectedBoneKeyframe();
+        });
+        showToast('已插入骨骼关键帧', 'success');
+    });
+
+    btnDeleteKeyframe.addEventListener('click', () => {
+        runAnimationEdit('删除关键帧', () => {
+            viewer.deleteSelectedBoneKeyframe();
+        });
+        showToast('已删除当前附近关键帧', 'success');
+    });
+
+    animKeyframeStrip.addEventListener('click', (event) => {
+        const state = viewer.getAnimationState();
+        if (!state.hasAnimations || state.duration <= 0) return;
+        const rect = animKeyframeStrip.getBoundingClientRect();
+        const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+        viewer.seekAnimation(state.duration * ratio);
+    });
+
+    animClipNameInput.addEventListener('change', () => {
+        const name = animClipNameInput.value;
+        runAnimationEdit('动画重命名', () => {
+            viewer.renameActiveAnimationClip(name);
+        });
+    });
+
+    animTrackSelect.addEventListener('change', () => {
+        selectedAnimationTrackIndex = Number(animTrackSelect.value);
+        syncAnimationTrackControls(viewer.getAnimationEditorState(), { resetInputs: true });
+    });
+
+    animLoopInput.addEventListener('change', () => {
+        viewer.setAnimationLoop(animLoopInput.checked);
+    });
+
+    animSpeedInput.addEventListener('change', () => {
+        const value = parseFloat(animSpeedInput.value);
+        if (!Number.isFinite(value)) return;
+        viewer.setAnimationSpeed(Math.max(0, value));
+    });
+
+    let resumeAfterScrub = false;
+
+    animTimeRange.addEventListener('pointerdown', () => {
+        if (viewer.getAnimationState().playing) {
+            resumeAfterScrub = true;
+            viewer.pauseAnimation();
+        }
+    });
+
+    animTimeRange.addEventListener('input', () => {
+        if (animTimeRangeSyncing) return;
+        const time = parseFloat(animTimeRange.value);
+        if (!Number.isFinite(time)) return;
+        viewer.seekAnimation(time);
+    });
+
+    const finishScrub = () => {
+        if (resumeAfterScrub) {
+            resumeAfterScrub = false;
+            viewer.playAnimation();
+        }
+    };
+
+    animTimeRange.addEventListener('pointerup', finishScrub);
+    animTimeRange.addEventListener('pointercancel', finishScrub);
+    animTimeRange.addEventListener('blur', finishScrub);
+
+    btnApplyAnimTransform.addEventListener('click', () => {
+        applySelectedAnimationTrackEdit();
+    });
+
+    bindNumericPair(animTimeScaleRange, animTimeScaleInput, () => undefined);
+
+    btnApplyAnimTimeScale.addEventListener('click', () => {
+        const factor = Number(animTimeScaleInput.value);
+        if (!Number.isFinite(factor) || factor <= 0) return;
+        if (nearlyEqual(factor, 1)) {
+            showToast('时长倍率未变化', 'info');
+            return;
+        }
+        runAnimationEdit('动画时长', () => {
+            viewer.scaleActiveAnimationTiming(factor);
+        });
+        setNumericPairValue(animTimeScaleRange, animTimeScaleInput, 1);
+        showToast('动画时长已更新', 'success');
+    });
+
+    window.addEventListener('keydown', (event) => {
+        if (event.defaultPrevented) return;
+        if (event.code !== 'Space') return;
+        if (isEditableTarget(event.target)) return;
+        if (!viewer.getAnimationState().hasAnimations) return;
+        event.preventDefault();
+        viewer.toggleAnimation();
+    });
+
+    refreshAnimationBar(viewer.getAnimationState());
+}
+
+function refreshAnimationBar(state: AnimationPlaybackState): void {
+    if (!state.hasAnimations) {
+        animBar.hidden = true;
+        animBar.classList.remove('is-playing');
+        animClipSelect.innerHTML = '';
+        animTimeRange.value = '0';
+        animTimeRange.max = '0';
+        animTimeLabel.textContent = '—';
+        animSummary.textContent = '';
+        return;
+    }
+
+    animBar.hidden = false;
+
+    const previousValue = animClipSelect.value;
+    const desiredValue = String(state.activeIndex);
+    const optionsMatch = animClipSelect.options.length === state.clips.length
+        && state.clips.every((meta, index) => animClipSelect.options[index]?.value === String(meta.index));
+
+    if (!optionsMatch) {
+        animClipSelect.innerHTML = state.clips
+            .map((meta) => {
+                const label = `${meta.name} · ${meta.duration.toFixed(2)}s`;
+                return `<option value="${meta.index}">${escapeHtml(label)}</option>`;
+            })
+            .join('');
+    }
+    if (animClipSelect.value !== desiredValue) {
+        animClipSelect.value = desiredValue;
+    } else if (!optionsMatch && previousValue !== desiredValue) {
+        animClipSelect.value = desiredValue;
+    }
+
+    animBar.classList.toggle('is-playing', state.playing);
+    animPlayBtn.title = state.playing ? '暂停 (Space)' : '播放 (Space)';
+    if (animLoopInput.checked !== state.loop) {
+        animLoopInput.checked = state.loop;
+    }
+    if (parseFloat(animSpeedInput.value) !== state.speed) {
+        animSpeedInput.value = String(state.speed);
+    }
+
+    animSummary.textContent = state.clips.length > 1
+        ? `${state.activeIndex + 1} / ${state.clips.length}`
+        : '';
+
+    syncAnimationProgress(state);
+}
+
+function syncAnimationProgress(state: AnimationPlaybackState): void {
+    const duration = state.duration;
+    const time = Math.min(state.time, duration);
+
+    animTimeRangeSyncing = true;
+    animTimeRange.max = duration > 0 ? String(duration) : '0';
+    animTimeRange.step = duration > 0 ? String(Math.max(duration / 1000, 0.001)) : '0.001';
+    animTimeRange.value = duration > 0 ? String(time) : '0';
+    animTimeRangeSyncing = false;
+
+    animTimeLabel.textContent = formatAnimationTime(time, duration);
+}
+
+function formatAnimationTime(time: number, duration: number): string {
+    if (duration <= 0) return '—';
+    return `${time.toFixed(2)} / ${duration.toFixed(2)}s`;
+}
+
+function openAnimationInspector(): void {
+    layoutState.activeTab = 'animation';
+    applyInspectorState();
+    persistLayout();
+    viewer.setSkeletonVisible(true);
+}
+
+function setBoneTransformMode(mode: BoneTransformMode): void {
+    viewer.setBoneTransformMode(mode);
+    syncAnimationEditor();
+}
+
+function syncAnimationEditor(): void {
+    const state = viewer.getAnimationEditorState();
+    const skeletonState = viewer.getSkeletonEditorState();
+    if (!state.hasAnimations && !skeletonState.hasSkeleton) {
+        animEditorEmpty.hidden = false;
+        animEditor.hidden = true;
+        selectedAnimationTrackIndex = -1;
+        animClipNameInput.value = '';
+        return;
+    }
+
+    animEditorEmpty.hidden = true;
+    animEditor.hidden = false;
+    renderSkeletonControls(skeletonState);
+    animClipNameInput.value = state.clipName || 'Pose Action';
+    animClipDuration.textContent = state.duration > 0 ? `${state.duration.toFixed(2)}s` : '—';
+    animTrackCount.textContent = String(state.tracks.length);
+    renderAnimationTimeline(skeletonState, viewer.getAnimationState());
+
+    const previousValue = animTrackSelect.value;
+    animTrackSelect.innerHTML = state.tracks.map((track) => {
+        const label = `${track.target} · ${track.propertyLabel} · ${track.keyframes}`;
+        const disabled = track.editable ? '' : ' disabled';
+        return `<option value="${track.index}"${disabled}>${escapeHtml(label)}</option>`;
+    }).join('');
+
+    if (state.tracks.length === 0) {
+        selectedAnimationTrackIndex = -1;
+        animTrackType.textContent = '—';
+        animTrackKeys.textContent = '—';
+        animTransformControls.hidden = true;
+        btnApplyAnimTransform.disabled = true;
+        return;
+    }
+
+    const previousIndex = Number(previousValue);
+    let shouldResetInputs = false;
+    const selectedStillAvailable = state.tracks.some((track) => track.index === selectedAnimationTrackIndex && track.editable);
+    if (!selectedStillAvailable) {
+        const fromPrevious = state.tracks.find((track) => track.index === previousIndex && track.editable);
+        const firstEditable = state.tracks.find((track) => track.editable);
+        selectedAnimationTrackIndex = (fromPrevious ?? firstEditable ?? state.tracks[0]).index;
+        shouldResetInputs = true;
+    }
+
+    animTrackSelect.value = String(selectedAnimationTrackIndex);
+    syncAnimationTrackControls(state, { resetInputs: shouldResetInputs });
+}
+
+function renderSkeletonControls(state: SkeletonEditorState): void {
+    animShowSkeletonInput.checked = state.skeletonVisible;
+    animShowSkeletonInput.disabled = !state.hasSkeleton;
+    animBoneSelect.disabled = !state.hasSkeleton;
+    animIkEnabledInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    btnInsertKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    btnDeleteKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    animSelectedBone.textContent = state.selectedBoneName || '—';
+    animIkEnabledInput.checked = state.ikEnabled;
+    syncTransformModeButtons(state.transformMode);
+
+    const currentValue = animBoneSelect.value;
+    const optionsMatch = animBoneSelect.options.length === state.bones.length
+        && state.bones.every((bone, index) => animBoneSelect.options[index]?.value === String(bone.index));
+    if (!optionsMatch) {
+        animBoneSelect.innerHTML = state.bones
+            .map((bone) => `<option value="${bone.index}">${escapeHtml(bone.name)}</option>`)
+            .join('');
+    }
+
+    const desiredValue = String(state.selectedBoneIndex);
+    if (state.selectedBoneIndex >= 0 && animBoneSelect.value !== desiredValue) {
+        animBoneSelect.value = desiredValue;
+    } else if (!optionsMatch && currentValue) {
+        animBoneSelect.value = currentValue;
+    }
+}
+
+function syncTransformModeButtons(mode: BoneTransformMode): void {
+    const rotateActive = mode === 'rotate';
+    animModeRotate.classList.toggle('active', rotateActive);
+    animModeRotate.setAttribute('aria-pressed', String(rotateActive));
+    animModeTranslate.classList.toggle('active', !rotateActive);
+    animModeTranslate.setAttribute('aria-pressed', String(!rotateActive));
+}
+
+function renderAnimationTimeline(
+    skeletonState: SkeletonEditorState,
+    playbackState: AnimationPlaybackState,
+): void {
+    const duration = playbackState.duration;
+    const playhead = duration > 0 ? clamp((playbackState.time / duration) * 100, 0, 100) : 0;
+    animKeyframeStrip.style.setProperty('--playhead', `${playhead}%`);
+    animKeyframeStrip.innerHTML = duration > 0
+        ? skeletonState.keyframes.map((marker) => {
+            const left = clamp((marker.time / duration) * 100, 0, 100);
+            return `<span class="animation-keyframe-marker${marker.selectedBone ? ' selected' : ''}" style="left:${left}%"></span>`;
+        }).join('')
+        : '';
+}
+
+function syncAnimationTrackControls(
+    state: AnimationEditorState,
+    options: { resetInputs?: boolean } = {},
+): void {
+    const track = state.tracks.find((item) => item.index === selectedAnimationTrackIndex) ?? null;
+    if (!track) {
+        animTrackType.textContent = '—';
+        animTrackKeys.textContent = '—';
+        animTransformControls.hidden = true;
+        btnApplyAnimTransform.disabled = true;
+        return;
+    }
+
+    animTrackType.textContent = `${track.target} / ${track.propertyLabel}`;
+    animTrackKeys.textContent = String(track.keyframes);
+    animTransformControls.hidden = !track.editable;
+    btnApplyAnimTransform.disabled = !track.editable;
+    if (options.resetInputs) resetAnimationTrackEditInputs(track);
+}
+
+function resetAnimationTrackEditInputs(track: AnimationTrackMeta): void {
+    const isScale = track.property === 'scale';
+    const isRotation = track.property === 'quaternion';
+    const value = isScale ? 1 : 0;
+    const step = isRotation ? '1' : '0.01';
+
+    animEditXLabel.textContent = 'X';
+    animEditYLabel.textContent = 'Y';
+    animEditZLabel.textContent = 'Z';
+
+    for (const input of [animEditXInput, animEditYInput, animEditZInput]) {
+        input.step = step;
+        input.value = String(value);
+    }
+}
+
+function applySelectedAnimationTrackEdit(): void {
+    const state = viewer.getAnimationEditorState();
+    const track = state.tracks.find((item) => item.index === selectedAnimationTrackIndex);
+    if (!track?.editable) return;
+
+    const x = Number(animEditXInput.value);
+    const y = Number(animEditYInput.value);
+    const z = Number(animEditZInput.value);
+    if (![x, y, z].every(Number.isFinite)) return;
+
+    const edit = track.property === 'scale'
+        ? {
+            x: normalizeAnimationScaleInput(x),
+            y: normalizeAnimationScaleInput(y),
+            z: normalizeAnimationScaleInput(z),
+        }
+        : { x, y, z };
+    const unchanged = track.property === 'scale'
+        ? nearlyEqual(edit.x, 1) && nearlyEqual(edit.y, 1) && nearlyEqual(edit.z, 1)
+        : nearlyEqual(edit.x, 0) && nearlyEqual(edit.y, 0) && nearlyEqual(edit.z, 0);
+    if (unchanged) {
+        showToast('轨道数值未变化', 'info');
+        return;
+    }
+
+    runAnimationEdit(`骨骼${track.propertyLabel}`, () => {
+        viewer.applyAnimationTrackVectorEdit(track.index, edit);
+    });
+    resetAnimationTrackEditInputs(track);
+    showToast('骨骼动画轨道已更新', 'success');
+}
+
+function normalizeAnimationScaleInput(value: number): number {
+    return Number.isFinite(value) && Math.abs(value) > 1e-6 ? value : 1;
+}
+
+function setupViewportDrop(): void {
+    viewport.addEventListener('dragover', (event) => {
+        if (!isFileDrag(event)) return;
+        event.preventDefault();
+        viewport.classList.add('drag-over');
+    });
+
+    viewport.addEventListener('dragleave', (event) => {
+        if (!isFileDrag(event)) return;
+        if (event.target === viewport || event.target === canvas) {
+            viewport.classList.remove('drag-over');
+        }
+    });
+
+    viewport.addEventListener('drop', async (event) => {
+        if (!isFileDrag(event)) return;
+        event.preventDefault();
+        viewport.classList.remove('drag-over');
+        const files = event.dataTransfer?.files ? Array.from(event.dataTransfer.files) : [];
+        if (files.length > 0) await loadFiles(files);
+    });
+
+    window.addEventListener('dragover', (event) => {
+        if (!isFileDrag(event)) return;
+        event.preventDefault();
+    });
+
+    window.addEventListener('drop', (event) => {
+        if (!isFileDrag(event)) return;
+        event.preventDefault();
+    });
+
+    if (inNative) {
+        win.onFileDrop(() => {
+            showToast('请把文件拖到 3D 视口里，不要拖到窗口边框', 'error');
+        });
+    }
+}
+
+function setupDisplayToggles(): void {
+    togWire.addEventListener('change', () => {
+        viewer.setWireframe(togWire.checked);
+    });
+    togGrid.addEventListener('change', () => {
+        viewer.setGridVisible(togGrid.checked);
+    });
+    togAxes.addEventListener('change', () => {
+        viewer.setAxesVisible(togAxes.checked);
+    });
+    togBg.addEventListener('change', () => {
+        viewer.setLightBackground(togBg.checked);
+    });
+}
+
+function setupPropertyControls(): void {
+    bindNumericPair(cameraFovRange, cameraFovInput, (value) => {
+        viewer.setCameraFov(value);
+        syncPropertyPanelCamera();
+    });
+
+    bindNumericPair(cameraExposureRange, cameraExposureInput, (value) => {
+        viewer.setExposure(value);
+        syncPropertyPanelCamera();
+    });
+
+    matVisible.addEventListener('change', () => {
+        runMaterialEdit('材质显示', () => {
+            viewer.setModelVisible(matVisible.checked);
+        });
+        syncMaterialControls();
+    });
+
+    matMode.addEventListener('change', () => {
+        const nextMode = matMode.value;
+        if (!isMaterialEditMode(nextMode)) return;
+        runMaterialEdit('材质模式', () => {
+            viewer.setMaterialMode(nextMode);
+        });
+        syncMaterialControls();
+    });
+
+    bindNumericPair(matOpacityRange, matOpacityInput, (value) => {
+        scheduleMaterialEdit({ opacity: value });
+    }, {
+        onBegin: () => beginMaterialUndoTransaction('材质透明度'),
+        onCommit: () => commitMaterialUndoTransaction(),
+    });
+
+    bindNumericPair(matRoughnessRange, matRoughnessInput, (value) => {
+        scheduleMaterialEdit({ roughness: value });
+    }, {
+        onBegin: () => beginMaterialUndoTransaction('材质粗糙度'),
+        onCommit: () => commitMaterialUndoTransaction(),
+    });
+
+    bindNumericPair(matMetalnessRange, matMetalnessInput, (value) => {
+        scheduleMaterialEdit({ metalness: value });
+    }, {
+        onBegin: () => beginMaterialUndoTransaction('材质金属度'),
+        onCommit: () => commitMaterialUndoTransaction(),
+    });
+
+    const beginColorEdit = () => beginMaterialUndoTransaction('材质颜色');
+    matColorInput.addEventListener('pointerdown', beginColorEdit);
+    matColorInput.addEventListener('focus', beginColorEdit);
+    matColorInput.addEventListener('input', () => {
+        scheduleMaterialEdit({ color: matColorInput.value });
+    });
+    matColorInput.addEventListener('change', () => {
+        commitMaterialUndoTransaction();
+        syncMaterialControls();
+    });
+    matColorInput.addEventListener('blur', () => {
+        commitMaterialUndoTransaction();
+    });
+
+    matFlat.addEventListener('change', () => {
+        runMaterialEdit('平面着色', () => {
+            viewer.setFlatShading(matFlat.checked);
+        });
+        syncMaterialControls();
+    });
+
+    matDoubleSided.addEventListener('change', () => {
+        runMaterialEdit('双面显示', () => {
+            viewer.setDoubleSided(matDoubleSided.checked);
+        });
+        syncMaterialControls();
+    });
+
+    btnResetMaterial.addEventListener('click', () => {
+        runMaterialEdit('材质重置', () => {
+            viewer.resetMaterialEdits();
+        });
+        syncMaterialControls();
+        showToast('材质已恢复原始状态', 'success');
+    });
+}
+
+function setupTextureControls(): void {
+    textureList.addEventListener('click', (event) => {
+        const button = (event.target as HTMLElement).closest<HTMLButtonElement>('.texture-slot');
+        const slot = button?.dataset.textureSlot;
+        if (!isTextureSlotId(slot)) return;
+        selectedTextureSlot = slot;
+        syncTextureInspector();
+    });
+
+    bindNumericPair(texOffsetXRange, texOffsetXInput, (value) => {
+        applyTextureTransform({ offsetX: value });
+    }, {
+        onBegin: () => beginTextureUndoTransaction('贴图偏移 X'),
+        onCommit: () => commitTextureUndoTransaction(),
+    });
+    bindNumericPair(texOffsetYRange, texOffsetYInput, (value) => {
+        applyTextureTransform({ offsetY: value });
+    }, {
+        onBegin: () => beginTextureUndoTransaction('贴图偏移 Y'),
+        onCommit: () => commitTextureUndoTransaction(),
+    });
+    bindNumericPair(texRepeatXRange, texRepeatXInput, (value) => {
+        applyTextureTransform({ repeatX: value });
+    }, {
+        onBegin: () => beginTextureUndoTransaction('贴图平铺 X'),
+        onCommit: () => commitTextureUndoTransaction(),
+    });
+    bindNumericPair(texRepeatYRange, texRepeatYInput, (value) => {
+        applyTextureTransform({ repeatY: value });
+    }, {
+        onBegin: () => beginTextureUndoTransaction('贴图平铺 Y'),
+        onCommit: () => commitTextureUndoTransaction(),
+    });
+    bindNumericPair(texRotationRange, texRotationInput, (value) => {
+        applyTextureTransform({ rotation: value });
+    }, {
+        onBegin: () => beginTextureUndoTransaction('贴图旋转'),
+        onCommit: () => commitTextureUndoTransaction(),
+    });
+
+    btnResetTextureTransform.addEventListener('click', () => {
+        const slot = selectedTextureSlot;
+        if (!slot) return;
+        runTextureEdit('贴图映射重置', () => {
+            viewer.resetTextureTransform(slot);
+        });
+        syncTextureInspector();
+        showToast('UV 映射已重置', 'success');
+    });
+}
+
+function setupUvEditor(): void {
+    const modeButtons = [uvSelectVertex, uvSelectEdge, uvSelectFace];
+    for (const button of modeButtons) {
+        button.addEventListener('click', () => {
+            const mode = button.dataset.uvSelectMode;
+            if (!isUvSelectionMode(mode)) return;
+            setUvSelectionMode(mode);
+        });
+    }
+
+    uvSnapEnabledInput.addEventListener('change', () => {
+        uvSnapEnabled = uvSnapEnabledInput.checked;
+        syncUvEditorControls();
+        setUvEditorIdleStatus();
+        renderUvEditor(currentTextureSlotState);
+    });
+
+    bindNumericPair(uvSnapStrengthRange, uvSnapStrengthInput, (value) => {
+        uvSnapStrength = clamp(value, 0.25, 3);
+        syncUvEditorControls();
+        setUvEditorIdleStatus();
+        renderUvEditor(currentTextureSlotState);
+    });
+
+    syncUvEditorControls();
+
+    const resizeObserver = new ResizeObserver(() => {
+        renderUvEditor(currentTextureSlotState);
+    });
+    resizeObserver.observe(uvEditorFrame);
+
+    uvEditorCanvas.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+    });
+
+    uvEditorCanvas.addEventListener('wheel', (event) => {
+        if (!currentTextureSlotState) return;
+        event.preventDefault();
+
+        if (selectedUvPointIds.size > 0 && (event.ctrlKey || event.altKey)) {
+            if (event.altKey) {
+                rotateSelectedUvPoints(-event.deltaY * 0.35);
+            } else {
+                scaleSelectedUvPoints(Math.exp(-event.deltaY * 0.0018));
+            }
+            return;
+        }
+
+        const rect = uvEditorCanvas.getBoundingClientRect();
+        const before = screenToUv(event.clientX - rect.left, event.clientY - rect.top);
+        const factor = Math.exp(-event.deltaY * 0.0012);
+        uvView.zoom = clamp(uvView.zoom * factor, 0.35, 24);
+        const after = screenToUv(event.clientX - rect.left, event.clientY - rect.top);
+        uvView.centerX += before.x - after.x;
+        uvView.centerY += before.y - after.y;
+        renderUvEditor(currentTextureSlotState);
+    }, { passive: false });
+
+    uvEditorCanvas.addEventListener('pointerdown', (event) => {
+        if (!currentTextureSlotState || !currentUvEditorState) return;
+
+        const wantsPan = event.button === 1 || event.button === 2 || event.altKey;
+        const rect = uvEditorCanvas.getBoundingClientRect();
+        const localX = event.clientX - rect.left;
+        const localY = event.clientY - rect.top;
+        const screenTransform = getUvScreenTransform();
+        const uvPoint = screenToUv(localX, localY, screenTransform);
+        const handle = wantsPan ? null : hitSelectionHandle(localX, localY, screenTransform);
+        const nearestPointId = uvSelectionMode === 'vertex'
+            ? findNearestUvPoint(currentUvEditorState, localX, localY, screenTransform)
+            : null;
+        const nearestEdge = uvSelectionMode === 'edge'
+            ? findNearestUvEdge(localX, localY, screenTransform)
+            : null;
+        const hitFaceId = uvSelectionMode === 'face'
+            ? findTriangleIndexAtUv(currentUvEditorState, uvPoint.x, uvPoint.y)
+            : null;
+        const additive = event.shiftKey || event.metaKey;
+        const subtractive = event.ctrlKey;
+
+        uvDragState.pointerId = event.pointerId;
+        uvDragState.startClientX = event.clientX;
+        uvDragState.startClientY = event.clientY;
+        uvDragState.startCenterX = uvView.centerX;
+        uvDragState.startCenterY = uvView.centerY;
+        uvDragState.startUvX = uvPoint.x;
+        uvDragState.startUvY = uvPoint.y;
+        uvDragState.startSelection = [];
+        uvDragState.additive = additive;
+        uvDragState.subtractive = subtractive;
+        uvDragState.moved = false;
+        uvDragState.boxStartX = localX;
+        uvDragState.boxStartY = localY;
+        uvDragState.boxCurrentX = localX;
+        uvDragState.boxCurrentY = localY;
+        uvDragState.transformPivotX = 0;
+        uvDragState.transformPivotY = 0;
+        uvDragState.transformStartAngle = 0;
+        uvDragState.transformHandle = handle;
+        clearUvPreviewSelection();
+
+        if (wantsPan) {
+            uvDragState.mode = 'pan';
+            uvEditorCanvas.setPointerCapture(event.pointerId);
+            uvEditorFrame.classList.add('is-panning');
+            uvEditorStatus.textContent = '正在平移 UV 视图…';
+            event.preventDefault();
+            return;
+        }
+
+        if (handle && selectedUvPointIds.size > 0) {
+            const bounds = getSelectedUvBounds();
+            if (!bounds) return;
+
+            uvDragState.startSelection = getSelectedPointSnapshot();
+            uvDragState.transformPivotX = bounds.centerX;
+            uvDragState.transformPivotY = bounds.centerY;
+            uvDragState.transformStartAngle = Math.atan2(
+                uvPoint.y - bounds.centerY,
+                uvPoint.x - bounds.centerX,
+            );
+            uvDragState.mode = handle === 'rotate' ? 'rotate-selection' : 'scale-selection';
+            uvEditorCanvas.setPointerCapture(event.pointerId);
+            uvEditorFrame.classList.add('is-offset-drag');
+            uvEditorStatus.textContent = handle === 'rotate'
+                ? `正在旋转 ${selectedUvPointIds.size} 个 UV 点…`
+                : `正在缩放 ${selectedUvPointIds.size} 个 UV 点…`;
+            event.preventDefault();
+            return;
+        }
+
+        if (nearestPointId !== null) {
+            if (subtractive) {
+                runUvSelectionEdit('UV 选择', () => {
+                    selectedUvPointIds.delete(nearestPointId);
+                    selectedUvEdgeIds.clear();
+                    selectedUvFaceIds.clear();
+                });
+                uvDragState.mode = 'idle';
+                uvDragState.pointerId = null;
+                uvEditorStatus.textContent = `已选择 ${formatUvSelectionCount(selectedUvPointIds.size, 'vertex')}`;
+                renderUvEditor(currentTextureSlotState);
+                event.preventDefault();
+                return;
+            }
+
+            if (additive) {
+                runUvSelectionEdit('UV 选择', () => {
+                    toggleUvPointSelection(nearestPointId);
+                });
+                uvDragState.mode = 'idle';
+                uvDragState.pointerId = null;
+                uvEditorStatus.textContent = `已选择 ${formatUvSelectionCount(selectedUvPointIds.size, 'vertex')}`;
+                renderUvEditor(currentTextureSlotState);
+                event.preventDefault();
+                return;
+            } else if (!selectedUvPointIds.has(nearestPointId)) {
+                runUvSelectionEdit('UV 选择', () => {
+                    setSelectedUvPoints([nearestPointId]);
+                });
+            }
+
+            uvDragState.mode = 'move-selection';
+            uvEditorCanvas.setPointerCapture(event.pointerId);
+            uvDragState.startSelection = getSelectedPointSnapshot();
+            uvEditorFrame.classList.add('is-offset-drag');
+            uvEditorStatus.textContent = `正在拖动 ${formatUvSelectionCount(selectedUvPointIds.size, 'vertex')}…`;
+            renderUvEditor(currentTextureSlotState);
+            event.preventDefault();
+            return;
+        }
+
+        if (nearestEdge) {
+            if (subtractive) {
+                runUvSelectionEdit('UV 选择', () => {
+                    selectedUvEdgeIds.delete(nearestEdge.id);
+                    syncUvDerivedPointSelection();
+                });
+                uvDragState.mode = 'idle';
+                uvDragState.pointerId = null;
+                uvEditorStatus.textContent = `已选择 ${formatUvSelectionCount(selectedUvEdgeIds.size, 'edge')}`;
+                renderUvEditor(currentTextureSlotState);
+                event.preventDefault();
+                return;
+            }
+
+            if (additive) {
+                runUvSelectionEdit('UV 选择', () => {
+                    toggleUvEdgeSelection(nearestEdge.id);
+                });
+                uvDragState.mode = 'idle';
+                uvDragState.pointerId = null;
+                uvEditorStatus.textContent = `已选择 ${formatUvSelectionCount(selectedUvEdgeIds.size, 'edge')}`;
+                renderUvEditor(currentTextureSlotState);
+                event.preventDefault();
+                return;
+            }
+            else if (!selectedUvEdgeIds.has(nearestEdge.id)) {
+                runUvSelectionEdit('UV 选择', () => {
+                    setSelectedUvEdges([nearestEdge.id]);
+                });
+            }
+
+            uvDragState.mode = 'move-selection';
+            uvEditorCanvas.setPointerCapture(event.pointerId);
+            uvDragState.startSelection = getSelectedPointSnapshot();
+            uvEditorFrame.classList.add('is-offset-drag');
+            uvEditorStatus.textContent = `正在拖动 ${formatUvSelectionCount(selectedUvEdgeIds.size, 'edge')}，影响 ${selectedUvPointIds.size} 个 UV 点…`;
+            renderUvEditor(currentTextureSlotState);
+            event.preventDefault();
+            return;
+        }
+
+        if (hitFaceId !== null) {
+            if (subtractive) {
+                runUvSelectionEdit('UV 选择', () => {
+                    selectedUvFaceIds.delete(hitFaceId);
+                    syncUvDerivedPointSelection();
+                });
+                uvDragState.mode = 'idle';
+                uvDragState.pointerId = null;
+                uvEditorStatus.textContent = `已选择 ${formatUvSelectionCount(selectedUvFaceIds.size, 'face')}`;
+                renderUvEditor(currentTextureSlotState);
+                event.preventDefault();
+                return;
+            }
+
+            if (additive) {
+                runUvSelectionEdit('UV 选择', () => {
+                    toggleUvFaceSelection(hitFaceId);
+                });
+                uvDragState.mode = 'idle';
+                uvDragState.pointerId = null;
+                uvEditorStatus.textContent = `已选择 ${formatUvSelectionCount(selectedUvFaceIds.size, 'face')}`;
+                renderUvEditor(currentTextureSlotState);
+                event.preventDefault();
+                return;
+            } else if (!selectedUvFaceIds.has(hitFaceId)) {
+                runUvSelectionEdit('UV 选择', () => {
+                    setSelectedUvFaces([hitFaceId]);
+                });
+            }
+
+            uvDragState.mode = 'move-selection';
+            uvEditorCanvas.setPointerCapture(event.pointerId);
+            uvDragState.startSelection = getSelectedPointSnapshot();
+            uvEditorFrame.classList.add('is-offset-drag');
+            uvEditorStatus.textContent = `正在拖动 ${formatUvSelectionCount(selectedUvFaceIds.size, 'face')}，影响 ${selectedUvPointIds.size} 个 UV 点…`;
+            renderUvEditor(currentTextureSlotState);
+            event.preventDefault();
+            return;
+        }
+
+        uvDragState.mode = 'box-select';
+        uvEditorCanvas.setPointerCapture(event.pointerId);
+        uvEditorFrame.classList.add('is-box-selecting');
+        updateUvBoxPreview();
+        uvEditorStatus.textContent = `正在框选 ${getUvSelectionModeLabel()}…`;
+        renderUvEditor(currentTextureSlotState);
+        event.preventDefault();
+    });
+
+    uvEditorCanvas.addEventListener('pointermove', (event) => {
+        if (uvDragState.pointerId !== event.pointerId || uvDragState.mode === 'idle' || !currentTextureSlotState) {
+            return;
+        }
+
+        const dx = event.clientX - uvDragState.startClientX;
+        const dy = event.clientY - uvDragState.startClientY;
+        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) uvDragState.moved = true;
+
+        if (uvDragState.mode === 'pan') {
+            const axisScale = getUvAxisScale();
+            uvView.centerX = uvDragState.startCenterX - dx / axisScale.x;
+            uvView.centerY = uvDragState.startCenterY + dy / axisScale.y;
+            renderUvEditor(currentTextureSlotState);
+            return;
+        }
+
+        const rect = uvEditorCanvas.getBoundingClientRect();
+        const localX = event.clientX - rect.left;
+        const localY = event.clientY - rect.top;
+
+        if (uvDragState.mode === 'box-select') {
+            uvDragState.boxCurrentX = localX;
+            uvDragState.boxCurrentY = localY;
+            updateUvBoxPreview();
+            uvEditorStatus.textContent = describeUvBoxPreview();
+            renderUvEditor(currentTextureSlotState);
+            return;
+        }
+
+        const currentUv = screenToUv(localX, localY, getUvScreenTransform());
+
+        if (uvDragState.mode === 'rotate-selection') {
+            const angle = Math.atan2(
+                currentUv.y - uvDragState.transformPivotY,
+                currentUv.x - uvDragState.transformPivotX,
+            );
+            const deltaAngle = angle - uvDragState.transformStartAngle;
+            applyUvTransformToSelection({
+                rotateDeg: (deltaAngle * 180) / Math.PI,
+                snap: true,
+            });
+            return;
+        }
+
+        if (uvDragState.mode === 'scale-selection') {
+            const startVectorX = uvDragState.startUvX - uvDragState.transformPivotX;
+            const startVectorY = uvDragState.startUvY - uvDragState.transformPivotY;
+            const currentVectorX = currentUv.x - uvDragState.transformPivotX;
+            const currentVectorY = currentUv.y - uvDragState.transformPivotY;
+            const scaleX = Math.abs(startVectorX) > 1e-6 ? currentVectorX / startVectorX : 1;
+            const scaleY = Math.abs(startVectorY) > 1e-6 ? currentVectorY / startVectorY : 1;
+            applyUvTransformToSelection({
+                scaleX: clampScaleFactor(scaleX),
+                scaleY: clampScaleFactor(scaleY),
+                snap: true,
+            });
+            return;
+        }
+
+        const deltaX = currentUv.x - uvDragState.startUvX;
+        const deltaY = currentUv.y - uvDragState.startUvY;
+        applyUvPointUpdates(
+            uvDragState.startSelection.map((point) => ({
+                pointId: point.pointId,
+                x: point.x + deltaX,
+                y: point.y + deltaY,
+            })),
+            { snap: true },
+        );
+    });
+
+    const stopDrag = (event: PointerEvent) => {
+        if (uvDragState.pointerId !== event.pointerId) return;
+        finishActiveUvInteraction({ commit: true });
+    };
+
+    uvEditorCanvas.addEventListener('pointerup', stopDrag);
+    uvEditorCanvas.addEventListener('pointercancel', stopDrag);
+    uvEditorCanvas.addEventListener('lostpointercapture', stopDrag);
+    window.addEventListener('blur', () => {
+        finishActiveUvInteraction({ commit: true });
+    });
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) finishActiveUvInteraction({ commit: true });
+    });
+    uvEditorCanvas.addEventListener('dblclick', () => {
+        resetUvView();
+        renderUvEditor(currentTextureSlotState);
+    });
+}
+
+function finishActiveUvInteraction(options: { commit: boolean }): void {
+    if (uvDragState.mode === 'idle') return;
+
+    const completedMode = uvDragState.mode;
+    const completedSelection = uvDragState.startSelection.map((point) => ({ ...point }));
+    const shouldRecordUvUndo = options.commit
+        && uvDragState.moved
+        && (completedMode === 'move-selection'
+            || completedMode === 'scale-selection'
+            || completedMode === 'rotate-selection');
+
+    if (options.commit && completedMode === 'box-select') {
+        runUvSelectionEdit('UV 选择', () => {
+            commitUvBoxSelection();
+            if (!uvDragState.moved && !uvDragState.additive && !uvDragState.subtractive) {
+                clearUvSelection();
+            }
+        });
+    }
+
+    if (shouldRecordUvUndo) {
+        pushUvUndoEntry(completedSelection, getUvUndoLabelForDragMode(completedMode));
+    }
+
+    const pointerId = uvDragState.pointerId;
+    uvDragState.mode = 'idle';
+    uvDragState.pointerId = null;
+    uvDragState.startSelection = [];
+    uvDragState.transformHandle = null;
+
+    if (pointerId !== null && uvEditorCanvas.hasPointerCapture?.(pointerId)) {
+        try {
+            uvEditorCanvas.releasePointerCapture(pointerId);
+        } catch {
+            // Pointer capture may already be released by the browser during document switches.
+        }
+    }
+
+    uvEditorFrame.classList.remove('is-panning', 'is-offset-drag', 'is-box-selecting');
+    clearUvPreviewSelection();
+    setUvEditorIdleStatus();
+    renderUvEditor(currentTextureSlotState);
+}
+
+function syncUvEditorControls(): void {
+    const buttons: Array<[UvSelectionMode, HTMLButtonElement]> = [
+        ['vertex', uvSelectVertex],
+        ['edge', uvSelectEdge],
+        ['face', uvSelectFace],
+    ];
+
+    for (const [mode, button] of buttons) {
+        const active = uvSelectionMode === mode;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', String(active));
+    }
+
+    uvSnapEnabledInput.checked = uvSnapEnabled;
+    setNumericPairValue(uvSnapStrengthRange, uvSnapStrengthInput, uvSnapStrength);
+}
+
+function setUvSelectionMode(mode: UvSelectionMode): void {
+    if (uvSelectionMode === mode) return;
+    runUvSelectionEdit('UV 选择模式', () => {
+        uvSelectionMode = mode;
+        clearUvSelection();
+        clearUvPreviewSelection();
+    });
+    syncUvEditorControls();
+    setUvEditorIdleStatus();
+    renderUvEditor(currentTextureSlotState);
+}
+
+function getUvSelectionModeLabel(mode: UvSelectionMode = uvSelectionMode): string {
+    if (mode === 'vertex') return '顶点';
+    if (mode === 'edge') return '边';
+    return '面';
+}
+
+function getUvUndoLabelForDragMode(
+    mode: typeof uvDragState.mode,
+): string {
+    if (mode === 'scale-selection') return 'UV 缩放';
+    if (mode === 'rotate-selection') return 'UV 旋转';
+    return 'UV 移动';
+}
+
+function formatUvSelectionCount(count: number, mode: UvSelectionMode = uvSelectionMode): string {
+    if (mode === 'vertex') return `${count} 个顶点`;
+    if (mode === 'edge') return `${count} 条边`;
+    return `${count} 个面`;
+}
+
+function getDefaultUvStatusText(): string {
+    const snapText = uvSnapEnabled
+        ? `吸附×${uvSnapStrength.toFixed(2)}`
+        : '吸附关闭';
+    return `${getUvSelectionModeLabel()}模式 | Shift加选 Ctrl减选 | Alt/中键平移 | 滚轮缩放 | Ctrl缩放选区 Alt旋转选区 | ${snapText}`;
+}
+
+function setUvEditorIdleStatus(): void {
+    uvEditorStatus.textContent = currentTextureSlotState
+        ? getDefaultUvStatusText()
+        : '当前材质没有 UV 贴图';
+}
+
+function clearUvSelection(): void {
+    selectedUvPointIds.clear();
+    selectedUvEdgeIds.clear();
+    selectedUvFaceIds.clear();
+}
+
+function clearUvPreviewSelection(): void {
+    previewUvPointIds.clear();
+    previewUvEdgeIds.clear();
+    previewUvFaceIds.clear();
+}
+
+function resetUvEditorSelectionState(): void {
+    clearUvSelection();
+    clearUvPreviewSelection();
+}
+
+function runUvSelectionEdit(label: string, apply: () => void): void {
+    if (!currentUvEditorState || suppressUndoRecording) {
+        apply();
+        return;
+    }
+
+    const before = captureUvSelectionSnapshot();
+    apply();
+    if (areUvSelectionSnapshotsEqual(before, captureUvSelectionSnapshot())) return;
+
+    pushUndoEntry({
+        kind: 'uv-selection',
+        label,
+        selection: before,
+    });
+}
+
+function resetUvTexturePatternCache(): void {
+    uvTexturePatternSource = null;
+    uvTexturePattern = null;
+    uvTexturePatternMode = 'no-repeat';
+}
+
+function rebuildUvEdgeCache(): void {
+    currentUvEdges = [];
+    currentUvEdgeMap.clear();
+    if (!currentUvEditorState) return;
+
+    const dedupe = new Set<string>();
+    for (const triangle of currentUvEditorState.triangles) {
+        addUvEdge(triangle.a, triangle.b, triangle.islandId, dedupe);
+        addUvEdge(triangle.b, triangle.c, triangle.islandId, dedupe);
+        addUvEdge(triangle.c, triangle.a, triangle.islandId, dedupe);
+    }
+}
+
+function addUvEdge(a: number, b: number, islandId: number, dedupe: Set<string>): void {
+    const key = a < b ? `${a}:${b}` : `${b}:${a}`;
+    if (dedupe.has(key)) return;
+    dedupe.add(key);
+    const edge: UvEdgeState = { id: key, a, b, islandId };
+    currentUvEdges.push(edge);
+    currentUvEdgeMap.set(key, edge);
+}
+
+function syncUvDerivedPointSelection(): void {
+    if (!currentUvEditorState) {
+        selectedUvPointIds.clear();
+        return;
+    }
+
+    if (uvSelectionMode === 'vertex') {
+        selectedUvEdgeIds.clear();
+        selectedUvFaceIds.clear();
+        for (const pointId of [...selectedUvPointIds]) {
+            if (!currentUvEditorState.points[pointId]) selectedUvPointIds.delete(pointId);
+        }
+        return;
+    }
+
+    selectedUvPointIds.clear();
+
+    if (uvSelectionMode === 'edge') {
+        for (const edgeId of [...selectedUvEdgeIds]) {
+            const edge = currentUvEdgeMap.get(edgeId);
+            if (!edge) {
+                selectedUvEdgeIds.delete(edgeId);
+                continue;
+            }
+            selectedUvPointIds.add(edge.a);
+            selectedUvPointIds.add(edge.b);
+        }
+        selectedUvFaceIds.clear();
+        return;
+    }
+
+    for (const faceId of [...selectedUvFaceIds]) {
+        const face = currentUvEditorState.triangles[faceId];
+        if (!face) {
+            selectedUvFaceIds.delete(faceId);
+            continue;
+        }
+        selectedUvPointIds.add(face.a);
+        selectedUvPointIds.add(face.b);
+        selectedUvPointIds.add(face.c);
+    }
+    selectedUvEdgeIds.clear();
+}
+
+function syncUvPreviewPointSelection(): void {
+    previewUvPointIds.clear();
+    if (!currentUvEditorState) return;
+
+    if (uvSelectionMode === 'vertex') {
+        return;
+    }
+
+    if (uvSelectionMode === 'edge') {
+        for (const edgeId of previewUvEdgeIds) {
+            const edge = currentUvEdgeMap.get(edgeId);
+            if (!edge) continue;
+            previewUvPointIds.add(edge.a);
+            previewUvPointIds.add(edge.b);
+        }
+        return;
+    }
+
+    for (const faceId of previewUvFaceIds) {
+        const face = currentUvEditorState.triangles[faceId];
+        if (!face) continue;
+        previewUvPointIds.add(face.a);
+        previewUvPointIds.add(face.b);
+        previewUvPointIds.add(face.c);
+    }
+}
+
+function setSelectedUvPoints(pointIds: number[]): void {
+    clearUvSelection();
+    pointIds.forEach((pointId) => {
+        if (currentUvEditorState?.points[pointId]) selectedUvPointIds.add(pointId);
+    });
+}
+
+function setSelectedUvEdges(edgeIds: string[]): void {
+    clearUvSelection();
+    for (const edgeId of edgeIds) {
+        if (currentUvEdgeMap.has(edgeId)) selectedUvEdgeIds.add(edgeId);
+    }
+    syncUvDerivedPointSelection();
+}
+
+function setSelectedUvFaces(faceIds: number[]): void {
+    clearUvSelection();
+    for (const faceId of faceIds) {
+        if (currentUvEditorState?.triangles[faceId]) selectedUvFaceIds.add(faceId);
+    }
+    syncUvDerivedPointSelection();
+}
+
+function toggleUvEdgeSelection(edgeId: string): void {
+    if (!currentUvEdgeMap.has(edgeId)) return;
+    selectedUvPointIds.clear();
+    selectedUvFaceIds.clear();
+    if (selectedUvEdgeIds.has(edgeId)) selectedUvEdgeIds.delete(edgeId);
+    else selectedUvEdgeIds.add(edgeId);
+    syncUvDerivedPointSelection();
+}
+
+function toggleUvFaceSelection(faceId: number): void {
+    if (!currentUvEditorState?.triangles[faceId]) return;
+    selectedUvPointIds.clear();
+    selectedUvEdgeIds.clear();
+    if (selectedUvFaceIds.has(faceId)) selectedUvFaceIds.delete(faceId);
+    else selectedUvFaceIds.add(faceId);
+    syncUvDerivedPointSelection();
+}
+
+function getSelectedUvElementCount(): number {
+    if (uvSelectionMode === 'vertex') return selectedUvPointIds.size;
+    if (uvSelectionMode === 'edge') return selectedUvEdgeIds.size;
+    return selectedUvFaceIds.size;
+}
+
+function getPreviewUvElementCount(): number {
+    if (uvSelectionMode === 'vertex') return previewUvPointIds.size;
+    if (uvSelectionMode === 'edge') return previewUvEdgeIds.size;
+    return previewUvFaceIds.size;
+}
+
+function describeUvBoxPreview(): string {
+    const count = getPreviewUvElementCount();
+    const verb = uvDragState.subtractive
+        ? '框选减选预览'
+        : uvDragState.additive
+            ? '框选加选预览'
+            : '框选预选';
+    return `${verb} ${formatUvSelectionCount(count)}`;
+}
+
+function updateUvBoxPreview(): void {
+    clearUvPreviewSelection();
+    if (!currentUvEditorState) return;
+
+    const transform = getUvScreenTransform();
+    if (uvSelectionMode === 'vertex') {
+        collectPointsInSelectionRect(transform).forEach((pointId) => previewUvPointIds.add(pointId));
+        return;
+    }
+
+    if (uvSelectionMode === 'edge') {
+        collectEdgesInSelectionRect(transform).forEach((edgeId) => previewUvEdgeIds.add(edgeId));
+        syncUvPreviewPointSelection();
+        return;
+    }
+
+    collectFacesInSelectionRect(transform).forEach((faceId) => previewUvFaceIds.add(faceId));
+    syncUvPreviewPointSelection();
+}
+
+function commitUvBoxSelection(): void {
+    if (uvSelectionMode === 'vertex') {
+        if (uvDragState.subtractive) {
+            previewUvPointIds.forEach((pointId) => selectedUvPointIds.delete(pointId));
+        } else if (uvDragState.additive) {
+            previewUvPointIds.forEach((pointId) => selectedUvPointIds.add(pointId));
+        } else {
+            setSelectedUvPoints([...previewUvPointIds]);
+        }
+        selectedUvEdgeIds.clear();
+        selectedUvFaceIds.clear();
+        return;
+    }
+
+    if (uvSelectionMode === 'edge') {
+        if (uvDragState.subtractive) {
+            previewUvEdgeIds.forEach((edgeId) => selectedUvEdgeIds.delete(edgeId));
+        } else if (uvDragState.additive) {
+            previewUvEdgeIds.forEach((edgeId) => selectedUvEdgeIds.add(edgeId));
+        } else {
+            setSelectedUvEdges([...previewUvEdgeIds]);
+            return;
+        }
+        syncUvDerivedPointSelection();
+        return;
+    }
+
+    if (uvDragState.subtractive) {
+        previewUvFaceIds.forEach((faceId) => selectedUvFaceIds.delete(faceId));
+    } else if (uvDragState.additive) {
+        previewUvFaceIds.forEach((faceId) => selectedUvFaceIds.add(faceId));
+    } else {
+        setSelectedUvFaces([...previewUvFaceIds]);
+        return;
+    }
+    syncUvDerivedPointSelection();
+}
+
+function createSampleDocument(): DocumentSession {
+    return {
+        id: `doc-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+        name: '内置示例',
+        root: createSampleModel(),
+        kind: 'sample',
+        dirty: false,
+        undoStack: [],
+        redoStack: [],
+    };
+}
+
+function getActiveDocument(): DocumentSession | null {
+    return documents.find((item) => item.id === activeDocumentId) ?? null;
+}
+
+function scheduleMaterialEdit(edit: Partial<typeof pendingMaterialEdit>): void {
+    Object.assign(pendingMaterialEdit, edit);
+    if (materialEditFrame) return;
+    materialEditFrame = window.requestAnimationFrame(() => {
+        materialEditFrame = 0;
+        flushPendingMaterialFrame();
+    });
+}
+
+function flushPendingMaterialFrame(): void {
+    if (materialEditFrame) {
+        window.cancelAnimationFrame(materialEditFrame);
+        materialEditFrame = 0;
+    }
+
+    const { opacity, roughness, metalness, color } = pendingMaterialEdit;
+    if (
+        opacity === undefined
+        && roughness === undefined
+        && metalness === undefined
+        && color === undefined
+    ) {
+        return;
+    }
+
+    pendingMaterialEdit.opacity = undefined;
+    pendingMaterialEdit.roughness = undefined;
+    pendingMaterialEdit.metalness = undefined;
+    pendingMaterialEdit.color = undefined;
+
+    if (opacity !== undefined) viewer.setModelOpacity(opacity);
+    if (roughness !== undefined) viewer.setMaterialRoughness(roughness);
+    if (metalness !== undefined) viewer.setMaterialMetalness(metalness);
+    if (color !== undefined) viewer.setModelColor(color);
+    syncMaterialControls();
+}
+
+function resetUndoDrafts(): void {
+    flushPendingMaterialFrame();
+    materialUndoDraft.snapshot = null;
+    materialUndoDraft.label = '';
+    textureUndoDraft.snapshot = null;
+    textureUndoDraft.label = '';
+    if (uvWheelUndoDraft.timer) {
+        window.clearTimeout(uvWheelUndoDraft.timer);
+        uvWheelUndoDraft.timer = 0;
+    }
+    uvWheelUndoDraft.snapshot = null;
+    uvWheelUndoDraft.selection = null;
+    uvWheelUndoDraft.label = '';
+    refreshButtons();
+}
+
+function pushUndoEntry(entry: UndoEntry): void {
+    if (suppressUndoRecording) return;
+    const active = getActiveDocument();
+    if (!active) return;
+    active.dirty = true;
+    active.undoStack.push(entry);
+    active.redoStack = [];
+    if (active.undoStack.length > MAX_UNDO_STEPS) {
+        active.undoStack.splice(0, active.undoStack.length - MAX_UNDO_STEPS);
+    }
+    syncDocumentState();
+    refreshButtons();
+}
+
+function pushRedoEntry(entry: UndoEntry): void {
+    const active = getActiveDocument();
+    if (!active) return;
+    active.redoStack.push(entry);
+    if (active.redoStack.length > MAX_UNDO_STEPS) {
+        active.redoStack.splice(0, active.redoStack.length - MAX_UNDO_STEPS);
+    }
+    refreshButtons();
+}
+
+function pushUndoEntryWithoutClearingRedo(entry: UndoEntry): void {
+    const active = getActiveDocument();
+    if (!active) return;
+    active.undoStack.push(entry);
+    if (active.undoStack.length > MAX_UNDO_STEPS) {
+        active.undoStack.splice(0, active.undoStack.length - MAX_UNDO_STEPS);
+    }
+    refreshButtons();
+}
+
+function markActiveDocumentDirty(): void {
+    const active = getActiveDocument();
+    if (!active) return;
+    active.dirty = true;
+    syncDocumentState();
+    refreshButtons();
+}
+
+function flushPendingUndoTransactions(): void {
+    commitMaterialUndoTransaction();
+    commitTextureUndoTransaction();
+    commitUvWheelUndoTransaction();
+    refreshButtons();
+}
+
+function beginMaterialUndoTransaction(label: string): void {
+    if (suppressUndoRecording || materialUndoDraft.snapshot) return;
+    materialUndoDraft.snapshot = viewer.getMaterialEditSnapshot();
+    materialUndoDraft.label = label;
+    refreshButtons();
+}
+
+function commitMaterialUndoTransaction(): void {
+    flushPendingMaterialFrame();
+    if (!materialUndoDraft.snapshot) return;
+    commitMaterialUndo(materialUndoDraft.snapshot, materialUndoDraft.label);
+    materialUndoDraft.snapshot = null;
+    materialUndoDraft.label = '';
+    refreshButtons();
+}
+
+function commitMaterialUndo(snapshot: MaterialEditSnapshot | null, label: string): void {
+    if (!snapshot) return;
+    const current = viewer.getMaterialEditSnapshot();
+    if (!current || areMaterialSnapshotsEqual(snapshot, current)) return;
+    pushUndoEntry({
+        kind: 'material',
+        label,
+        snapshot,
+    });
+}
+
+function runMaterialEdit(label: string, apply: () => void): void {
+    flushPendingMaterialFrame();
+    const snapshot = viewer.getMaterialEditSnapshot();
+    apply();
+    commitMaterialUndo(snapshot, label);
+}
+
+function beginTextureUndoTransaction(label: string): void {
+    if (suppressUndoRecording || textureUndoDraft.snapshot || !selectedTextureSlot) return;
+    textureUndoDraft.snapshot = captureTextureTransformSnapshot(selectedTextureSlot);
+    textureUndoDraft.label = label;
+    refreshButtons();
+}
+
+function commitTextureUndoTransaction(): void {
+    if (!textureUndoDraft.snapshot) return;
+    commitTextureUndo(textureUndoDraft.snapshot, textureUndoDraft.label);
+    textureUndoDraft.snapshot = null;
+    textureUndoDraft.label = '';
+    refreshButtons();
+}
+
+function commitTextureUndo(snapshot: TextureTransformSnapshot | null, label: string): void {
+    if (!snapshot) return;
+    const current = captureTextureTransformSnapshot(snapshot.slot);
+    if (!current || areTextureTransformSnapshotsEqual(snapshot, current)) return;
+    pushUndoEntry({
+        kind: 'texture',
+        label,
+        snapshot,
+    });
+}
+
+function runTextureEdit(label: string, apply: () => void): void {
+    const snapshot = selectedTextureSlot
+        ? captureTextureTransformSnapshot(selectedTextureSlot)
+        : null;
+    apply();
+    commitTextureUndo(snapshot, label);
+}
+
+function runAnimationEdit(label: string, apply: () => void): void {
+    const snapshot = viewer.captureAnimationSnapshot();
+    apply();
+    const current = viewer.captureAnimationSnapshot();
+    if (snapshot && current && !areAnimationSnapshotsEqual(snapshot, current)) {
+        pushUndoEntry({
+            kind: 'animation',
+            label,
+            snapshot,
+        });
+    } else if (!snapshot && current) {
+        markActiveDocumentDirty();
+    }
+    refreshAnimationBar(viewer.getAnimationState());
+    syncAnimationEditor();
+}
+
+function pushUvUndoEntry(
+    snapshot: UvPointSnapshot[],
+    label: string,
+    selection = captureUvSelectionSnapshot(),
+): void {
+    if (suppressUndoRecording || snapshot.length === 0) return;
+    const current = snapshotCurrentUvPoints(snapshot);
+    if (current.length === 0 || areUvSnapshotsEqual(snapshot, current)) return;
+    pushUndoEntry({
+        kind: 'uv',
+        label,
+        snapshot,
+        selection,
+    });
+}
+
+function beginUvWheelUndoTransaction(label: string): void {
+    if (suppressUndoRecording) return;
+    if (!uvWheelUndoDraft.snapshot) {
+        uvWheelUndoDraft.snapshot = getSelectedPointSnapshot();
+        uvWheelUndoDraft.selection = captureUvSelectionSnapshot();
+    }
+    uvWheelUndoDraft.label = label;
+    if (uvWheelUndoDraft.timer) window.clearTimeout(uvWheelUndoDraft.timer);
+    uvWheelUndoDraft.timer = window.setTimeout(() => {
+        commitUvWheelUndoTransaction();
+    }, 260);
+    refreshButtons();
+}
+
+function commitUvWheelUndoTransaction(): void {
+    if (uvWheelUndoDraft.timer) {
+        window.clearTimeout(uvWheelUndoDraft.timer);
+        uvWheelUndoDraft.timer = 0;
+    }
+    if (!uvWheelUndoDraft.snapshot) return;
+    pushUvUndoEntry(
+        uvWheelUndoDraft.snapshot,
+        uvWheelUndoDraft.label || 'UV 编辑',
+        uvWheelUndoDraft.selection ?? captureUvSelectionSnapshot(),
+    );
+    uvWheelUndoDraft.snapshot = null;
+    uvWheelUndoDraft.selection = null;
+    uvWheelUndoDraft.label = '';
+    refreshButtons();
+}
+
+function undoLastEdit(): void {
+    flushPendingUndoTransactions();
+    const active = getActiveDocument();
+    if (!active || active.undoStack.length === 0) {
+        showToast('没有可撤回的编辑', 'info');
+        refreshButtons();
+        return;
+    }
+
+    const entry = active.undoStack.pop()!;
+    resetUndoDrafts();
+    const redoEntry = captureCurrentUndoEntry(entry);
+
+    suppressUndoRecording = true;
+    try {
+        applyUndoEntry(entry);
+    } finally {
+        suppressUndoRecording = false;
+    }
+
+    if (redoEntry) pushRedoEntry(redoEntry);
+    active.dirty = true;
+    syncDocumentState();
+    refreshButtons();
+    showToast(`已撤回${entry.label}`, 'success');
+}
+
+function redoLastEdit(): void {
+    flushPendingUndoTransactions();
+    const active = getActiveDocument();
+    if (!active || active.redoStack.length === 0) {
+        showToast('没有可重做的编辑', 'info');
+        refreshButtons();
+        return;
+    }
+
+    const entry = active.redoStack.pop()!;
+    resetUndoDrafts();
+    const undoEntry = captureCurrentUndoEntry(entry);
+
+    suppressUndoRecording = true;
+    try {
+        applyUndoEntry(entry);
+    } finally {
+        suppressUndoRecording = false;
+    }
+
+    if (undoEntry) pushUndoEntryWithoutClearingRedo(undoEntry);
+    active.dirty = true;
+    syncDocumentState();
+    refreshButtons();
+    showToast(`已重做${entry.label}`, 'success');
+}
+
+function captureCurrentUndoEntry(template: UndoEntry): UndoEntry | null {
+    if (template.kind === 'material') {
+        const snapshot = viewer.getMaterialEditSnapshot();
+        return snapshot ? { kind: 'material', label: template.label, snapshot } : null;
+    }
+
+    if (template.kind === 'texture') {
+        const snapshot = captureTextureTransformSnapshot(template.snapshot.slot);
+        return snapshot ? { kind: 'texture', label: template.label, snapshot } : null;
+    }
+
+    if (template.kind === 'uv-selection') {
+        return {
+            kind: 'uv-selection',
+            label: template.label,
+            selection: captureUvSelectionSnapshot(),
+        };
+    }
+
+    if (template.kind === 'animation') {
+        const snapshot = viewer.captureAnimationSnapshot();
+        return snapshot ? { kind: 'animation', label: template.label, snapshot } : null;
+    }
+
+    const snapshot = snapshotCurrentUvPoints(template.snapshot);
+    if (snapshot.length === 0) return null;
+    return {
+        kind: 'uv',
+        label: template.label,
+        snapshot,
+        selection: captureUvSelectionSnapshot(),
+    };
+}
+
+function applyUndoEntry(entry: UndoEntry): void {
+    if (entry.kind === 'material') {
+        viewer.setMaterialEditSnapshot(entry.snapshot);
+        syncMaterialControls();
+        return;
+    }
+
+    if (entry.kind === 'texture') {
+        selectedTextureSlot = entry.snapshot.slot;
+        viewer.setTextureTransform(entry.snapshot.slot, entry.snapshot.transform);
+        refreshActiveTextureState();
+        return;
+    }
+
+    if (entry.kind === 'uv-selection') {
+        restoreUvSelection(entry.selection);
+        clearUvPreviewSelection();
+        setUvEditorIdleStatus();
+        renderUvEditor(currentTextureSlotState);
+        return;
+    }
+
+    if (entry.kind === 'animation') {
+        viewer.restoreAnimationSnapshot(entry.snapshot);
+        refreshAnimationBar(viewer.getAnimationState());
+        syncAnimationEditor();
+        return;
+    }
+
+    applyUvSnapshot(entry.snapshot, entry.selection);
+}
+
+function captureTextureTransformSnapshot(slot: TextureSlotId): TextureTransformSnapshot | null {
+    const state = viewer.getTextureState();
+    const current = state.slots.find((item) => item.slot === slot);
+    if (!current) return null;
+    return {
+        slot,
+        transform: {
+            offsetX: current.offsetX,
+            offsetY: current.offsetY,
+            repeatX: current.repeatX,
+            repeatY: current.repeatY,
+            rotation: current.rotation,
+        },
+    };
+}
+
+function snapshotCurrentUvPoints(snapshot: UvPointSnapshot[]): UvPointSnapshot[] {
+    if (!currentUvEditorState) return [];
+    return snapshot
+        .map((point) => currentUvEditorState?.points[point.pointId])
+        .filter((point): point is NonNullable<typeof point> => Boolean(point))
+        .map((point) => ({
+            pointId: point.id,
+            x: point.x,
+            y: point.y,
+        }));
+}
+
+function captureUvSelectionSnapshot(): UvSelectionSnapshot {
+    return {
+        mode: uvSelectionMode,
+        pointIds: [...selectedUvPointIds],
+        edgeIds: [...selectedUvEdgeIds],
+        faceIds: [...selectedUvFaceIds],
+    };
+}
+
+function restoreUvSelection(snapshot: UvSelectionSnapshot): void {
+    uvSelectionMode = snapshot.mode;
+    syncUvEditorControls();
+    if (snapshot.mode === 'vertex') {
+        setSelectedUvPoints(snapshot.pointIds);
+        return;
+    }
+    if (snapshot.mode === 'edge') {
+        setSelectedUvEdges(snapshot.edgeIds);
+        return;
+    }
+    setSelectedUvFaces(snapshot.faceIds);
+}
+
+function applyUvSnapshot(
+    snapshot: UvPointSnapshot[],
+    selection: UvSelectionSnapshot,
+): void {
+    if (snapshot.length === 0) return;
+    viewer.setUvPointPositions(snapshot);
+    currentUvEditorState = viewer.getUvEditorState();
+    rebuildUvEdgeCache();
+    restoreUvSelection(selection);
+    clearUvPreviewSelection();
+    setUvEditorIdleStatus();
+    renderUvEditor(currentTextureSlotState);
+}
+
+function areMaterialSnapshotsEqual(a: MaterialEditSnapshot, b: MaterialEditSnapshot): boolean {
+    return a.mode === b.mode
+        && a.visible === b.visible
+        && nearlyEqual(a.opacity, b.opacity)
+        && a.color === b.color
+        && a.flatShading === b.flatShading
+        && a.doubleSided === b.doubleSided
+        && nearlyEqual(a.roughness, b.roughness)
+        && nearlyEqual(a.metalness, b.metalness)
+        && a.colorOverride === b.colorOverride
+        && a.flatOverride === b.flatOverride
+        && a.doubleSidedOverride === b.doubleSidedOverride
+        && a.roughnessOverride === b.roughnessOverride
+        && a.metalnessOverride === b.metalnessOverride
+        && areTextureTransformMapsEqual(a.textureTransforms, b.textureTransforms);
+}
+
+function areTextureTransformMapsEqual(
+    a: Partial<Record<TextureSlotId, TextureTransform>>,
+    b: Partial<Record<TextureSlotId, TextureTransform>>,
+): boolean {
+    const slots = new Set<TextureSlotId>([
+        ...Object.keys(a),
+        ...Object.keys(b),
+    ] as TextureSlotId[]);
+
+    for (const slot of slots) {
+        if (!areTextureTransformsEqual(a[slot], b[slot])) return false;
+    }
+    return true;
+}
+
+function areTextureTransformSnapshotsEqual(
+    a: TextureTransformSnapshot,
+    b: TextureTransformSnapshot,
+): boolean {
+    return a.slot === b.slot && areTextureTransformsEqual(a.transform, b.transform);
+}
+
+function areAnimationSnapshotsEqual(a: AnimationClipSnapshot, b: AnimationClipSnapshot): boolean {
+    if (a.clipIndex !== b.clipIndex) return false;
+    if (a.clipName !== b.clipName) return false;
+    if (!nearlyEqual(a.duration, b.duration)) return false;
+    if (a.tracks.length !== b.tracks.length) return false;
+
+    for (let index = 0; index < a.tracks.length; index += 1) {
+        const first = a.tracks[index];
+        const second = b.tracks[index];
+        if (!second) return false;
+        if (first.index !== second.index || first.name !== second.name) return false;
+        if (!areNumberArraysNearlyEqual(first.times, second.times)) return false;
+        if (!areNumberArraysNearlyEqual(first.values, second.values)) return false;
+    }
+
+    return true;
+}
+
+function areTextureTransformsEqual(
+    a: TextureTransform | undefined,
+    b: TextureTransform | undefined,
+): boolean {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    return nearlyEqual(a.offsetX, b.offsetX)
+        && nearlyEqual(a.offsetY, b.offsetY)
+        && nearlyEqual(a.repeatX, b.repeatX)
+        && nearlyEqual(a.repeatY, b.repeatY)
+        && nearlyEqual(a.rotation, b.rotation);
+}
+
+function areUvSnapshotsEqual(a: UvPointSnapshot[], b: UvPointSnapshot[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let index = 0; index < a.length; index += 1) {
+        const first = a[index];
+        const second = b[index];
+        if (!second) return false;
+        if (first.pointId !== second.pointId) return false;
+        if (!nearlyEqual(first.x, second.x) || !nearlyEqual(first.y, second.y)) return false;
+    }
+    return true;
+}
+
+function areUvSelectionSnapshotsEqual(a: UvSelectionSnapshot, b: UvSelectionSnapshot): boolean {
+    return a.mode === b.mode
+        && areNumberArraysEqual(a.pointIds, b.pointIds)
+        && areStringArraysEqual(a.edgeIds, b.edgeIds)
+        && areNumberArraysEqual(a.faceIds, b.faceIds);
+}
+
+function areNumberArraysEqual(a: number[], b: number[]): boolean {
+    if (a.length !== b.length) return false;
+    const values = new Set(a);
+    for (const item of b) if (!values.has(item)) return false;
+    return true;
+}
+
+function areNumberArraysNearlyEqual(a: number[], b: number[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let index = 0; index < a.length; index += 1) {
+        if (!nearlyEqual(a[index], b[index])) return false;
+    }
+    return true;
+}
+
+function areStringArraysEqual(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) return false;
+    const values = new Set(a);
+    for (const item of b) if (!values.has(item)) return false;
+    return true;
+}
+
+function nearlyEqual(a: number, b: number): boolean {
+    return Math.abs(a - b) < 1e-4;
+}
+
+function renderDocumentTabs(): void {
+    documentTabs.innerHTML = documents.map((document) => {
+        const active = document.id === activeDocumentId;
+        const closeButton = documents.length > 1
+            ? `<button class="document-tab-close" type="button" data-document-id="${document.id}" aria-label="关闭 ${escapeHtml(document.name)}">×</button>`
+            : '';
+
+        return `
+            <div class="document-tab${active ? ' active' : ''}">
+                <button class="document-tab-main" type="button" data-document-id="${document.id}">
+                    ${document.dirty ? '<span class="document-tab-dot"></span>' : ''}
+                    <span class="document-tab-name">${escapeHtml(document.name)}</span>
+                </button>
+                ${closeButton}
+            </div>
+        `;
+    }).join('');
+}
+
+function activateDocument(id: string, options: { fit?: boolean } = {}): void {
+    const target = documents.find((item) => item.id === id);
+    if (!target) return;
+
+    finishActiveUvInteraction({ commit: true });
+    flushPendingUndoTransactions();
+    activeDocumentId = id;
+    resetUndoDrafts();
+    currentUvEditorState = null;
+    currentUvEdges = [];
+    currentUvEdgeMap.clear();
+    resetUvEditorSelectionState();
+    viewer.setActiveModel(target.root, { fit: options.fit ?? true });
+    resetUvView();
+    syncDocumentState();
+    refreshStats();
+    refreshButtons();
+    syncPropertyPanel();
+    syncMaterialControls();
+    syncTextureInspector();
+    syncAnimationEditor();
+    syncPropertyPanelCamera();
+}
+
+function closeDocument(id: string): void {
+    const index = documents.findIndex((item) => item.id === id);
+    if (index < 0) return;
+
+    const closing = documents[index];
+    const wasActive = closing.id === activeDocumentId;
+    if (wasActive) {
+        finishActiveUvInteraction({ commit: true });
+        flushPendingUndoTransactions();
+    }
+
+    documents.splice(index, 1);
+
+    if (wasActive) {
+        if (documents.length === 0) {
+            documents = [createSampleDocument()];
+        }
+        const fallback = documents[Math.max(0, index - 1)] ?? documents[0];
+        activeDocumentId = fallback.id;
+    }
+
+    if (wasActive) activateDocument(activeDocumentId, { fit: false });
+    else {
+        syncDocumentState();
+        refreshStats();
+        refreshButtons();
+        syncPropertyPanel();
+        syncMaterialControls();
+        syncTextureInspector();
+    }
+
+    if (closing.root) viewer.disposeModel(closing.root);
+}
+
+function clearActiveDocument(): void {
+    const active = getActiveDocument();
+    if (!active) return;
+    finishActiveUvInteraction({ commit: false });
+    flushPendingUndoTransactions();
+
+    const rootToDispose = active.root;
+    active.root = createSampleModel();
+    active.kind = 'sample';
+    active.name = '内置示例';
+    active.sourcePath = undefined;
+    active.dirty = false;
+    active.undoStack = [];
+    active.redoStack = [];
+
+    resetUndoDrafts();
+    currentUvEditorState = null;
+    currentUvEdges = [];
+    currentUvEdgeMap.clear();
+    resetUvEditorSelectionState();
+    viewer.setActiveModel(active.root, { fit: true });
+    viewer.disposeModel(rootToDispose);
+    syncDocumentState();
+    refreshStats();
+    refreshButtons();
+    syncPropertyPanel();
+    syncMaterialControls();
+    syncTextureInspector();
+    showToast('已恢复内置示例', 'success');
+}
+
+async function loadFiles(files: File[]): Promise<void> {
+    const supported = files.filter((file) => isSupported(file.name));
+    if (supported.length === 0) {
+        showToast(`不支持的格式，请使用 ${ACCEPT_EXTS.join(' / ').toUpperCase()}`, 'error');
+        return;
+    }
+
+    const mainFile = supported[0];
+    showLoading(`正在加载 ${mainFile.name} …`);
+
+    try {
+        const model = await loadFromFiles(files);
+        const sourcePath = typeof (mainFile as File & { path?: unknown }).path === 'string'
+            ? (mainFile as File & { path: string }).path
+            : undefined;
+        openDocumentWithModel(mainFile.name, model, sourcePath);
+        showToast(`已加载 ${mainFile.name}`, 'success');
+    } catch (error) {
+        console.error(error);
+        const message = error instanceof Error ? error.message : String(error);
+        showToast(`加载失败: ${message}`, 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function loadNativePaths(paths: string[]): Promise<void> {
+    const supported = [...new Set(paths)].filter((path) => isSupported(path));
+    if (supported.length === 0) {
+        showToast(`不支持的格式，请使用 ${ACCEPT_EXTS.join(' / ').toUpperCase()}`, 'error');
+        return;
+    }
+
+    let loadedCount = 0;
+    let lastLoadedName = '';
+
+    for (const path of supported) {
+        const name = fileNameOfPath(path);
+        showLoading(`正在加载 ${name} …`);
+        try {
+            const model = await loadFromPath(path);
+            openDocumentWithModel(name, model, path);
+            loadedCount += 1;
+            lastLoadedName = name;
+        } catch (error) {
+            console.error(error);
+            const message = error instanceof Error ? error.message : String(error);
+            showToast(`加载失败: ${message}`, 'error');
+        } finally {
+            hideLoading();
+        }
+    }
+
+    if (loadedCount > 0) {
+        showToast(loadedCount === 1 ? `已加载 ${lastLoadedName}` : `已加载 ${loadedCount} 个模型`, 'success');
+    }
+}
+
+function enqueueNativePathLoad(paths: string[]): Promise<void> {
+    nativeOpenQueue = nativeOpenQueue
+        .catch(() => undefined)
+        .then(() => loadNativePaths(paths));
+    return nativeOpenQueue.catch((error) => {
+        console.error(error);
+    });
+}
+
+async function handleOpenUrls(urls: string[]): Promise<void> {
+    const paths = extractModelPathsFromUrls(urls);
+    if (paths.length > 0) {
+        await enqueueNativePathLoad(paths);
+        return;
+    }
+
+    const count = new Set(urls).size;
+    if (count > 0) showToast(`已接收 ${count} 个应用链接`, 'info');
+}
+
+function canSaveActiveDocument(): boolean {
+    const active = getActiveDocument();
+    return Boolean(
+        inNative
+        && active
+        && active.kind === 'model'
+        && active.sourcePath
+        && isDirectSavePath(active.sourcePath),
+    );
+}
+
+async function saveActiveDocument(options: { saveAs: boolean }): Promise<void> {
+    const active = getActiveDocument();
+    if (!active) return;
+
+    finishActiveUvInteraction({ commit: true });
+    flushPendingUndoTransactions();
+
+    const directPath = !options.saveAs && canSaveActiveDocument() ? active.sourcePath : undefined;
+    let targetPath = directPath;
+    let downloadName = defaultExportName(active.name);
+
+    if (!targetPath) {
+        if (inNative) {
+            const selection = await dialog.saveFile({
+                filters: [
+                    { name: 'glTF 二进制', extensions: ['glb'] },
+                    { name: 'glTF JSON', extensions: ['gltf'] },
+                ],
+                defaultName: downloadName,
+            }).catch(() => null);
+            if (!selection) return;
+            targetPath = ensureExportExtension(selection);
+        } else {
+            targetPath = downloadName;
+        }
+    }
+
+    const binary = extOf(targetPath) !== 'gltf';
+    showLoading(`正在保存 ${fileNameOfPath(targetPath)} …`);
+
+    try {
+        const exported = await exportActiveDocument(active, { binary });
+        if (inNative) {
+            await writeExportToPath(targetPath, exported, binary);
+            active.sourcePath = targetPath;
+            active.name = fileNameOfPath(targetPath);
+        } else {
+            downloadName = fileNameOfPath(targetPath);
+            downloadExport(downloadName, exported, binary);
+        }
+
+        active.kind = 'model';
+        active.dirty = false;
+        syncDocumentState();
+        syncPropertyPanel();
+        refreshButtons();
+        showToast(`已保存 ${active.name}`, 'success');
+    } catch (error) {
+        console.error(error);
+        const message = error instanceof Error ? error.message : String(error);
+        showToast(`保存失败: ${message}`, 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+async function exportActiveDocument(
+    document: DocumentSession,
+    options: { binary: boolean },
+): Promise<ArrayBuffer | Record<string, unknown>> {
+    const { GLTFExporter } = await import('three/examples/jsm/exporters/GLTFExporter.js');
+    const exporter = new GLTFExporter();
+    const animations = viewer.getAnimationClipsForExport();
+
+    return withCleanExportUserData(document.root, () => new Promise<ArrayBuffer | Record<string, unknown>>((resolve, reject) => {
+        (exporter as unknown as {
+            parse: (
+                input: Object3D,
+                onDone: (result: ArrayBuffer | Record<string, unknown>) => void,
+                onError: (error: Error) => void,
+                options: Record<string, unknown>,
+            ) => void;
+        }).parse(document.root, resolve, reject, {
+            binary: options.binary,
+            onlyVisible: false,
+            trs: true,
+            animations,
+        });
+    }));
+}
+
+async function withCleanExportUserData<T>(rootModel: Object3D, run: () => Promise<T>): Promise<T> {
+    const patches: Array<{
+        object: Object3D;
+        key: string;
+        value: unknown;
+    }> = [];
+    const internalKeys = ['animations', '__assetObjectUrls'];
+
+    rootModel.traverse((object) => {
+        for (const key of internalKeys) {
+            if (!Object.prototype.hasOwnProperty.call(object.userData, key)) continue;
+            patches.push({ object, key, value: object.userData[key] });
+            delete object.userData[key];
+        }
+    });
+
+    try {
+        return await run();
+    } finally {
+        for (const patch of patches) {
+            patch.object.userData[patch.key] = patch.value;
+        }
+    }
+}
+
+async function writeExportToPath(
+    path: string,
+    exported: ArrayBuffer | Record<string, unknown>,
+    binary: boolean,
+): Promise<void> {
+    if (binary) {
+        if (!(exported instanceof ArrayBuffer)) throw new Error('导出结果不是 GLB 二进制');
+        await fs.writeBase64File(path, arrayBufferToBase64(exported));
+        return;
+    }
+
+    await fs.writeTextFile(path, JSON.stringify(exported, null, 2));
+}
+
+function downloadExport(
+    fileName: string,
+    exported: ArrayBuffer | Record<string, unknown>,
+    binary: boolean,
+): void {
+    const blob = binary
+        ? new Blob([exported as ArrayBuffer], { type: 'model/gltf-binary' })
+        : new Blob([JSON.stringify(exported, null, 2)], { type: 'model/gltf+json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = fileName;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    const chunkSize = 0x8000;
+    let binary = '';
+    for (let index = 0; index < bytes.length; index += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
+    }
+    return btoa(binary);
+}
+
+function isDirectSavePath(path: string): boolean {
+    const ext = extOf(path);
+    return ext === 'glb' || ext === 'gltf';
+}
+
+function ensureExportExtension(path: string): string {
+    const ext = extOf(path);
+    if (ext === 'glb' || ext === 'gltf') return path;
+    return `${path}.glb`;
+}
+
+function defaultExportName(name: string): string {
+    const trimmed = name.trim() || 'model';
+    const dot = trimmed.lastIndexOf('.');
+    const base = dot > 0 ? trimmed.slice(0, dot) : trimmed;
+    return `${base}.glb`;
+}
+
+function openDocumentWithModel(name: string, rootModel: Object3D, sourcePath?: string): void {
+    finishActiveUvInteraction({ commit: true });
+    flushPendingUndoTransactions();
+    const active = getActiveDocument();
+    if (active && active.kind === 'sample' && documents.length === 1) {
+        const previousRoot = active.root;
+        active.name = name;
+        active.root = rootModel;
+        active.kind = 'model';
+        active.sourcePath = sourcePath;
+        active.dirty = false;
+        active.undoStack = [];
+        active.redoStack = [];
+        activateDocument(active.id, { fit: true });
+        viewer.disposeModel(previousRoot);
+        return;
+    }
+
+    const next: DocumentSession = {
+        id: `doc-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+        name,
+        root: rootModel,
+        kind: 'model',
+        sourcePath,
+        dirty: false,
+        undoStack: [],
+        redoStack: [],
+    };
+    documents.push(next);
+    activateDocument(next.id, { fit: true });
+}
+
+function syncDocumentState(): void {
+    const active = getActiveDocument();
+    if (!active) return;
+
+    const stateLabel = loadingMessage
+        ? loadingMessage
+        : active.kind === 'sample'
+            ? '内置示例已载入'
+            : active.dirty
+                ? '有未保存修改'
+                : active.sourcePath
+                    ? '已保存'
+                    : '已载入模型';
+
+    setText(sceneStateEls, stateLabel);
+    setText(modelNameEls, active.name);
+    renderDocumentTabs();
+    updateWindowTitle(active.name);
+}
+
+function refreshStats(): void {
+    const stats = viewer.collectStats();
+    statVerts.textContent = stats.vertices.toLocaleString();
+    statFaces.textContent = stats.triangles.toLocaleString();
+    statEdges.textContent = stats.edges.toLocaleString();
+    statMeshes.textContent = stats.meshes.toLocaleString();
+}
+
+function refreshButtons(): void {
+    const active = getActiveDocument();
+    const hasPendingUndo = hasPendingUndoTransaction();
+    btnClear.disabled = false;
+    btnSave.disabled = !canSaveActiveDocument();
+    btnSaveAs.disabled = !active;
+    btnUndo.disabled = !active || (active.undoStack.length === 0 && !hasPendingUndo);
+    btnRedo.disabled = !active || hasPendingUndo || active.redoStack.length === 0;
+}
+
+function hasPendingUndoTransaction(): boolean {
+    return Boolean(
+        materialUndoDraft.snapshot
+        || textureUndoDraft.snapshot
+        || uvWheelUndoDraft.snapshot,
+    );
+}
+
+function syncPropertyPanel(): void {
+    const active = getActiveDocument();
+    if (!active) return;
+
+    const bounds = viewer.getBoundsFor(active.root);
+    propDocName.textContent = active.name;
+    propDocState.textContent = active.kind === 'sample'
+        ? '内置示例'
+        : active.dirty
+            ? '已修改'
+            : active.sourcePath
+                ? '已保存'
+                : '已载入';
+    propDocCount.textContent = String(documents.length);
+    propBounds.textContent = bounds ? formatVector(bounds.size) : '—';
+    propCenter.textContent = bounds ? formatVector(bounds.center) : '—';
+}
+
+function syncPropertyPanelCamera(): void {
+    const camera = viewer.getCameraState();
+    cameraFovRange.value = camera.fov.toFixed(0);
+    cameraFovInput.value = camera.fov.toFixed(0);
+    cameraExposureRange.value = camera.exposure.toFixed(2);
+    cameraExposureInput.value = camera.exposure.toFixed(2);
+    propCameraPos.textContent = formatVector(camera.position);
+    propCameraTarget.textContent = formatVector(camera.target);
+}
+
+function syncMaterialControls(): void {
+    const state = viewer.getMaterialState();
+    const disabled = !state.hasMaterial;
+
+    matVisible.checked = state.visible;
+    matMode.value = state.mode;
+    setNumericPairValue(matOpacityRange, matOpacityInput, state.opacity);
+    matColorInput.value = state.color;
+    setNumericPairValue(matRoughnessRange, matRoughnessInput, state.roughness);
+    setNumericPairValue(matMetalnessRange, matMetalnessInput, state.metalness);
+    matFlat.checked = state.flatShading;
+    matDoubleSided.checked = state.doubleSided;
+
+    [
+        matVisible,
+        matMode,
+        matOpacityRange,
+        matOpacityInput,
+        matColorInput,
+        matRoughnessRange,
+        matRoughnessInput,
+        matMetalnessRange,
+        matMetalnessInput,
+        matFlat,
+        matDoubleSided,
+        btnResetMaterial,
+    ].forEach((input) => {
+        input.disabled = disabled;
+    });
+
+    syncTextureInspector();
+}
+
+function syncTextureInspector(): void {
+    const state = viewer.getTextureState();
+
+    textureEmpty.hidden = state.hasTextures;
+    textureBrowser.hidden = !state.hasTextures;
+
+    if (!state.hasTextures) {
+        selectedTextureSlot = null;
+        currentTextureSlotState = null;
+        currentUvEditorState = null;
+        currentUvEdges = [];
+        currentUvEdgeMap.clear();
+        resetUvEditorSelectionState();
+        resetUvTexturePatternCache();
+        textureList.innerHTML = '';
+        texSlotName.textContent = '—';
+        texDimensions.textContent = '—';
+        texSourceName.textContent = '—';
+        uvEditorEmpty.hidden = false;
+        uvEditorEmpty.textContent = '当前材质没有 UV 贴图';
+        uvEditorStatus.textContent = '当前材质没有 UV 贴图';
+        setTextureControlsDisabled(true);
+        setTextureTransformValues(null);
+        renderUvEditor(null);
+        return;
+    }
+
+    if (!selectedTextureSlot || !state.slots.some((slot) => slot.slot === selectedTextureSlot)) {
+        selectedTextureSlot = state.slots[0]?.slot ?? null;
+    }
+
+    textureList.innerHTML = state.slots.map((slot) => `
+        <button
+            class="texture-slot${slot.slot === selectedTextureSlot ? ' active' : ''}"
+            type="button"
+            data-texture-slot="${slot.slot}"
+            title="${escapeHtml(getTextureSlotDisplayName(slot))}"
+            aria-label="${escapeHtml(getTextureSlotDisplayName(slot))}"
+        >
+            <strong class="texture-slot-title">${escapeHtml(slot.label)}</strong>
+            <span class="texture-slot-meta">${escapeHtml(formatTextureSlotMeta(slot))}</span>
+        </button>
+    `).join('');
+
+    const active = state.slots.find((slot) => slot.slot === selectedTextureSlot) ?? state.slots[0];
+    if (!active) {
+        setTextureControlsDisabled(true);
+        return;
+    }
+
+    selectedTextureSlot = active.slot;
+    currentTextureSlotState = active;
+    if (uvTexturePatternSource !== active.imageSource) resetUvTexturePatternCache();
+    currentUvEditorState = viewer.getUvEditorState();
+    rebuildUvEdgeCache();
+    pruneUvSelection();
+    syncTextureDetail(active);
+    setTextureControlsDisabled(false);
+    setTextureTransformValues(active);
+    renderUvEditor(active);
+}
+
+function syncTextureDetail(slot: TextureSlotState): void {
+    texSlotName.textContent = getTextureSlotDisplayName(slot);
+    texDimensions.textContent = slot.width && slot.height ? `${slot.width} × ${slot.height}` : '—';
+    texSourceName.textContent = slot.sourceName || '内嵌贴图';
+    setUvEditorIdleStatus();
+}
+
+function getTextureSlotDisplayName(slot: TextureSlotState): string {
+    return slot.textureCount > 1 ? `${slot.label} (${slot.textureCount})` : slot.label;
+}
+
+function formatTextureSlotMeta(slot: TextureSlotState): string {
+    const source = slot.sourceName || '内嵌贴图';
+    return slot.textureCount > 1 ? `${slot.textureCount} 张 · ${source}` : source;
+}
+
+function setTextureTransformValues(slot: TextureSlotState | null): void {
+    const values = slot ?? {
+        offsetX: 0,
+        offsetY: 0,
+        repeatX: 1,
+        repeatY: 1,
+        rotation: 0,
+    };
+
+    setNumericPairValue(texOffsetXRange, texOffsetXInput, values.offsetX);
+    setNumericPairValue(texOffsetYRange, texOffsetYInput, values.offsetY);
+    setNumericPairValue(texRepeatXRange, texRepeatXInput, values.repeatX);
+    setNumericPairValue(texRepeatYRange, texRepeatYInput, values.repeatY);
+    setNumericPairValue(texRotationRange, texRotationInput, values.rotation);
+}
+
+function setTextureControlsDisabled(disabled: boolean): void {
+    [
+        texOffsetXRange,
+        texOffsetXInput,
+        texOffsetYRange,
+        texOffsetYInput,
+        texRepeatXRange,
+        texRepeatXInput,
+        texRepeatYRange,
+        texRepeatYInput,
+        texRotationRange,
+        texRotationInput,
+        btnResetTextureTransform,
+    ].forEach((input) => {
+        input.disabled = disabled;
+    });
+}
+
+function applyTextureTransform(partial: {
+    offsetX?: number;
+    offsetY?: number;
+    repeatX?: number;
+    repeatY?: number;
+    rotation?: number;
+}): void {
+    if (!selectedTextureSlot) return;
+    viewer.setTextureTransform(selectedTextureSlot, partial);
+    refreshActiveTextureState();
+}
+
+function getSelectedUvBounds(): {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+    centerX: number;
+    centerY: number;
+} | null {
+    const snapshot = getSelectedPointSnapshot();
+    if (snapshot.length === 0) return null;
+
+    let minX = Number.POSITIVE_INFINITY;
+    let minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+
+    for (const point of snapshot) {
+        minX = Math.min(minX, point.x);
+        minY = Math.min(minY, point.y);
+        maxX = Math.max(maxX, point.x);
+        maxY = Math.max(maxY, point.y);
+    }
+
+    if (!Number.isFinite(minX) || !Number.isFinite(minY) || !Number.isFinite(maxX) || !Number.isFinite(maxY)) {
+        return null;
+    }
+
+    return {
+        minX,
+        minY,
+        maxX,
+        maxY,
+        centerX: (minX + maxX) / 2,
+        centerY: (minY + maxY) / 2,
+    };
+}
+
+function getSelectionHandleAnchors() {
+    const bounds = getSelectedUvBounds();
+    if (!bounds) return null;
+
+    const minSizeUv = 20 / getUvPixelsPerUnit();
+    const halfWidth = Math.max((bounds.maxX - bounds.minX) / 2, minSizeUv / 2);
+    const halfHeight = Math.max((bounds.maxY - bounds.minY) / 2, minSizeUv / 2);
+    const minX = bounds.centerX - halfWidth;
+    const maxX = bounds.centerX + halfWidth;
+    const minY = bounds.centerY - halfHeight;
+    const maxY = bounds.centerY + halfHeight;
+
+    return {
+        bounds: {
+            minX,
+            minY,
+            maxX,
+            maxY,
+            centerX: bounds.centerX,
+            centerY: bounds.centerY,
+        },
+        handles: {
+            'scale-nw': { x: minX, y: maxY },
+            'scale-ne': { x: maxX, y: maxY },
+            'scale-se': { x: maxX, y: minY },
+            'scale-sw': { x: minX, y: minY },
+            rotate: { x: bounds.centerX, y: maxY + 26 / getUvPixelsPerUnit() },
+        } satisfies Record<SelectionHandleType, { x: number; y: number }>,
+    };
+}
+
+function hitSelectionHandle(
+    screenX: number,
+    screenY: number,
+    transform = getUvScreenTransform(),
+): SelectionHandleType | null {
+    const anchors = getSelectionHandleAnchors();
+    if (!anchors) return null;
+
+    const thresholdPx = 10;
+    let best: { type: SelectionHandleType; distance: number } | null = null;
+
+    for (const [type, position] of Object.entries(anchors.handles) as Array<[SelectionHandleType, { x: number; y: number }]>) {
+        const screen = uvToScreen(position.x, position.y, transform);
+        const dx = screen.x - screenX;
+        const dy = screen.y - screenY;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+        if (distance > thresholdPx) continue;
+        if (!best || distance < best.distance) {
+            best = { type, distance };
+        }
+    }
+
+    return best?.type ?? null;
+}
+
+function pruneUvSelection(): void {
+    if (!currentUvEditorState) {
+        resetUvEditorSelectionState();
+        return;
+    }
+
+    const points = currentUvEditorState.points;
+    for (const pointId of [...selectedUvPointIds]) {
+        if (!points[pointId]) selectedUvPointIds.delete(pointId);
+    }
+
+    for (const edgeId of [...selectedUvEdgeIds]) {
+        if (!currentUvEdgeMap.has(edgeId)) selectedUvEdgeIds.delete(edgeId);
+    }
+
+    for (const faceId of [...selectedUvFaceIds]) {
+        if (!currentUvEditorState.triangles[faceId]) selectedUvFaceIds.delete(faceId);
+    }
+
+    syncUvDerivedPointSelection();
+    clearUvPreviewSelection();
+}
+
+function toggleUvPointSelection(pointId: number): void {
+    if (!currentUvEditorState?.points[pointId]) return;
+    selectedUvEdgeIds.clear();
+    selectedUvFaceIds.clear();
+    if (selectedUvPointIds.has(pointId)) selectedUvPointIds.delete(pointId);
+    else selectedUvPointIds.add(pointId);
+}
+
+function getSelectedPointSnapshot(): Array<{ pointId: number; x: number; y: number }> {
+    if (!currentUvEditorState) return [];
+    return [...selectedUvPointIds]
+        .map((pointId) => currentUvEditorState?.points[pointId])
+        .filter((point): point is NonNullable<typeof point> => Boolean(point))
+        .map((point) => ({
+            pointId: point.id,
+            x: point.x,
+            y: point.y,
+        }));
+}
+
+function findNearestUvPoint(
+    state: UvEditorState,
+    screenX: number,
+    screenY: number,
+    transform = getUvScreenTransform(),
+): number | null {
+    const radiusSq = 8 * 8;
+    let best: { pointId: number; distance: number } | null = null;
+
+    for (const point of state.points) {
+        const screen = uvToScreen(point.x, point.y, transform);
+        const dx = screen.x - screenX;
+        const dy = screen.y - screenY;
+        const distance = dx * dx + dy * dy;
+        if (distance > radiusSq) continue;
+        if (!best || distance < best.distance) {
+            best = { pointId: point.id, distance };
+        }
+    }
+
+    return best?.pointId ?? null;
+}
+
+function findNearestUvEdge(
+    screenX: number,
+    screenY: number,
+    transform = getUvScreenTransform(),
+): UvEdgeState | null {
+    if (!currentUvEditorState) return null;
+
+    const thresholdSq = 10 * 10;
+    let best: { edge: UvEdgeState; distance: number } | null = null;
+
+    for (const edge of currentUvEdges) {
+        const a = currentUvEditorState.points[edge.a];
+        const b = currentUvEditorState.points[edge.b];
+        if (!a || !b) continue;
+        const start = uvToScreen(a.x, a.y, transform);
+        const end = uvToScreen(b.x, b.y, transform);
+        const distance = distanceToSegmentSquared(screenX, screenY, start.x, start.y, end.x, end.y);
+        if (distance > thresholdSq) continue;
+        if (!best || distance < best.distance) {
+            best = { edge, distance };
+        }
+    }
+
+    return best?.edge ?? null;
+}
+
+function findTriangleIndexAtUv(
+    state: UvEditorState,
+    uvX: number,
+    uvY: number,
+): number | null {
+    for (let faceId = 0; faceId < state.triangles.length; faceId += 1) {
+        const triangle = state.triangles[faceId];
+        const a = state.points[triangle.a];
+        const b = state.points[triangle.b];
+        const c = state.points[triangle.c];
+        if (!a || !b || !c) continue;
+        if (pointInTriangle(uvX, uvY, a.x, a.y, b.x, b.y, c.x, c.y)) return faceId;
+    }
+    return null;
+}
+
+function pointInTriangle(
+    px: number,
+    py: number,
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+    cx: number,
+    cy: number,
+): boolean {
+    const area = (x1: number, y1: number, x2: number, y2: number, x3: number, y3: number) =>
+        (x1 - x3) * (y2 - y3) - (x2 - x3) * (y1 - y3);
+
+    const triangleArea = area(ax, ay, bx, by, cx, cy);
+    if (Math.abs(triangleArea) < 1e-8) return false;
+
+    const d1 = area(px, py, ax, ay, bx, by);
+    const d2 = area(px, py, bx, by, cx, cy);
+    const d3 = area(px, py, cx, cy, ax, ay);
+    const hasNeg = d1 < 0 || d2 < 0 || d3 < 0;
+    const hasPos = d1 > 0 || d2 > 0 || d3 > 0;
+    return !(hasNeg && hasPos);
+}
+
+function getUvSelectionRect(): {
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+} {
+    return {
+        left: Math.min(uvDragState.boxStartX, uvDragState.boxCurrentX),
+        right: Math.max(uvDragState.boxStartX, uvDragState.boxCurrentX),
+        top: Math.min(uvDragState.boxStartY, uvDragState.boxCurrentY),
+        bottom: Math.max(uvDragState.boxStartY, uvDragState.boxCurrentY),
+    };
+}
+
+function collectPointsInSelectionRect(transform = getUvScreenTransform()): number[] {
+    if (!currentUvEditorState) return [];
+
+    const rect = getUvSelectionRect();
+
+    return currentUvEditorState.points
+        .filter((point) => {
+            const screen = uvToScreen(point.x, point.y, transform);
+            return pointInRect(screen.x, screen.y, rect);
+        })
+        .map((point) => point.id);
+}
+
+function collectEdgesInSelectionRect(transform = getUvScreenTransform()): string[] {
+    const state = currentUvEditorState;
+    if (!state) return [];
+    const rect = getUvSelectionRect();
+
+    return currentUvEdges
+        .filter((edge) => {
+            const a = state.points[edge.a];
+            const b = state.points[edge.b];
+            if (!a || !b) return false;
+            const start = uvToScreen(a.x, a.y, transform);
+            const end = uvToScreen(b.x, b.y, transform);
+            return segmentIntersectsRect(start.x, start.y, end.x, end.y, rect);
+        })
+        .map((edge) => edge.id);
+}
+
+function collectFacesInSelectionRect(transform = getUvScreenTransform()): number[] {
+    const state = currentUvEditorState;
+    if (!state) return [];
+    const rect = getUvSelectionRect();
+    const rectCorners = [
+        { x: rect.left, y: rect.top },
+        { x: rect.right, y: rect.top },
+        { x: rect.right, y: rect.bottom },
+        { x: rect.left, y: rect.bottom },
+    ];
+
+    return state.triangles.flatMap((triangle, faceId) => {
+        const a = state.points[triangle.a];
+        const b = state.points[triangle.b];
+        const c = state.points[triangle.c];
+        if (!a || !b || !c) return [];
+
+        const sa = uvToScreen(a.x, a.y, transform);
+        const sb = uvToScreen(b.x, b.y, transform);
+        const sc = uvToScreen(c.x, c.y, transform);
+
+        const vertexInside = pointInRect(sa.x, sa.y, rect) || pointInRect(sb.x, sb.y, rect) || pointInRect(sc.x, sc.y, rect);
+        const cornerInside = rectCorners.some((corner) =>
+            pointInTriangle(corner.x, corner.y, sa.x, sa.y, sb.x, sb.y, sc.x, sc.y),
+        );
+        const edgeInside =
+            segmentIntersectsRect(sa.x, sa.y, sb.x, sb.y, rect) ||
+            segmentIntersectsRect(sb.x, sb.y, sc.x, sc.y, rect) ||
+            segmentIntersectsRect(sc.x, sc.y, sa.x, sa.y, rect);
+
+        return vertexInside || cornerInside || edgeInside ? [faceId] : [];
+    });
+}
+
+function pointInRect(
+    x: number,
+    y: number,
+    rect: { left: number; right: number; top: number; bottom: number },
+): boolean {
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+function segmentIntersectsRect(
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    rect: { left: number; right: number; top: number; bottom: number },
+): boolean {
+    if (pointInRect(x1, y1, rect) || pointInRect(x2, y2, rect)) return true;
+
+    return (
+        segmentsIntersect(x1, y1, x2, y2, rect.left, rect.top, rect.right, rect.top) ||
+        segmentsIntersect(x1, y1, x2, y2, rect.right, rect.top, rect.right, rect.bottom) ||
+        segmentsIntersect(x1, y1, x2, y2, rect.right, rect.bottom, rect.left, rect.bottom) ||
+        segmentsIntersect(x1, y1, x2, y2, rect.left, rect.bottom, rect.left, rect.top)
+    );
+}
+
+function segmentsIntersect(
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+    cx: number,
+    cy: number,
+    dx: number,
+    dy: number,
+): boolean {
+    const o1 = orientation(ax, ay, bx, by, cx, cy);
+    const o2 = orientation(ax, ay, bx, by, dx, dy);
+    const o3 = orientation(cx, cy, dx, dy, ax, ay);
+    const o4 = orientation(cx, cy, dx, dy, bx, by);
+
+    if (o1 !== o2 && o3 !== o4) return true;
+    if (o1 === 0 && pointOnSegment(cx, cy, ax, ay, bx, by)) return true;
+    if (o2 === 0 && pointOnSegment(dx, dy, ax, ay, bx, by)) return true;
+    if (o3 === 0 && pointOnSegment(ax, ay, cx, cy, dx, dy)) return true;
+    if (o4 === 0 && pointOnSegment(bx, by, cx, cy, dx, dy)) return true;
+    return false;
+}
+
+function orientation(
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+    cx: number,
+    cy: number,
+): number {
+    const value = (by - ay) * (cx - bx) - (bx - ax) * (cy - by);
+    if (Math.abs(value) < 1e-7) return 0;
+    return value > 0 ? 1 : 2;
+}
+
+function pointOnSegment(
+    px: number,
+    py: number,
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+): boolean {
+    return px >= Math.min(ax, bx) - 1e-7
+        && px <= Math.max(ax, bx) + 1e-7
+        && py >= Math.min(ay, by) - 1e-7
+        && py <= Math.max(ay, by) + 1e-7;
+}
+
+function distanceToSegmentSquared(
+    px: number,
+    py: number,
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+): number {
+    const dx = bx - ax;
+    const dy = by - ay;
+    if (Math.abs(dx) < 1e-8 && Math.abs(dy) < 1e-8) {
+        const ox = px - ax;
+        const oy = py - ay;
+        return ox * ox + oy * oy;
+    }
+
+    const t = clamp(((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy), 0, 1);
+    const closestX = ax + dx * t;
+    const closestY = ay + dy * t;
+    const ox = px - closestX;
+    const oy = py - closestY;
+    return ox * ox + oy * oy;
+}
+
+function applyUvPointUpdates(
+    updates: Array<{ pointId: number; x: number; y: number }>,
+    options: {
+        snap?: boolean;
+    } = {},
+): void {
+    applyUvPointUpdatesInternal(updates, options);
+}
+
+function applyUvPointUpdatesInternal(
+    updates: Array<{ pointId: number; x: number; y: number }>,
+    options: {
+        snap?: boolean;
+    } = {},
+): void {
+    if (!currentUvEditorState || updates.length === 0) return;
+
+    const nextUpdates = options.snap
+        ? applyUvSnapping(updates)
+        : updates;
+
+    viewer.setUvPointPositions(nextUpdates);
+
+    for (const update of nextUpdates) {
+        const point = currentUvEditorState.points[update.pointId];
+        if (!point) continue;
+        point.x = update.x;
+        point.y = update.y;
+    }
+
+    currentUvEditorState.segments = buildUvSegmentsFromState(currentUvEditorState);
+    renderUvEditor(currentTextureSlotState);
+}
+
+function applyUvTransformToSelection(options: {
+    scaleX?: number;
+    scaleY?: number;
+    rotateDeg?: number;
+    snap?: boolean;
+}): void {
+    if (!currentUvEditorState || uvDragState.startSelection.length === 0) return;
+
+    const pivotX = uvDragState.transformPivotX;
+    const pivotY = uvDragState.transformPivotY;
+    const scaleX = options.scaleX ?? 1;
+    const scaleY = options.scaleY ?? 1;
+    const radians = ((options.rotateDeg ?? 0) * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+
+    applyUvPointUpdatesInternal(uvDragState.startSelection.map((point) => {
+        const scaledX = (point.x - pivotX) * scaleX;
+        const scaledY = (point.y - pivotY) * scaleY;
+        const rotatedX = scaledX * cos - scaledY * sin;
+        const rotatedY = scaledX * sin + scaledY * cos;
+        return {
+            pointId: point.pointId,
+            x: pivotX + rotatedX,
+            y: pivotY + rotatedY,
+        };
+    }), {
+        snap: options.snap,
+    });
+}
+
+function applyUvSnapping(
+    updates: Array<{ pointId: number; x: number; y: number }>,
+): Array<{ pointId: number; x: number; y: number }> {
+    if (!currentUvEditorState || updates.length === 0 || !uvSnapEnabled) return updates;
+
+    const offset = getUvPointSnapOffset(updates) ?? getUvGridSnapOffset(updates);
+    if (!offset || (Math.abs(offset.x) < 1e-8 && Math.abs(offset.y) < 1e-8)) return updates;
+
+    return updates.map((update) => ({
+        pointId: update.pointId,
+        x: update.x + offset.x,
+        y: update.y + offset.y,
+    }));
+}
+
+function getUvPointSnapOffset(
+    updates: Array<{ pointId: number; x: number; y: number }>,
+): { x: number; y: number } | null {
+    if (!currentUvEditorState) return null;
+
+    const selectedIds = new Set(updates.map((update) => update.pointId));
+    const threshold = 10 * uvSnapStrength;
+    const thresholdSq = threshold ** 2;
+    const transform = getUvScreenTransform();
+    const cellSize = Math.max(threshold, 1);
+    const snapGrid = buildUvPointSnapGrid(selectedIds, transform, cellSize);
+    let best: { x: number; y: number; distance: number } | null = null;
+
+    for (const update of updates) {
+        const updateScreen = uvToScreen(update.x, update.y, transform);
+        const cellX = Math.floor(updateScreen.x / cellSize);
+        const cellY = Math.floor(updateScreen.y / cellSize);
+        for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+            for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+                const bucket = snapGrid.get(`${cellX + offsetX}:${cellY + offsetY}`);
+                if (!bucket) continue;
+
+                for (const point of bucket) {
+                    const screenDx = point.screenX - updateScreen.x;
+                    const screenDy = point.screenY - updateScreen.y;
+                    const distance = screenDx * screenDx + screenDy * screenDy;
+                    if (distance > thresholdSq) continue;
+                    const dx = point.x - update.x;
+                    const dy = point.y - update.y;
+                    if (!best || distance < best.distance) {
+                        best = { x: dx, y: dy, distance };
+                    }
+                }
+            }
+        }
+    }
+
+    return best ? { x: best.x, y: best.y } : null;
+}
+
+function buildUvPointSnapGrid(
+    excludedIds: Set<number>,
+    transform: UvScreenTransform,
+    cellSize: number,
+): Map<string, Array<{ x: number; y: number; screenX: number; screenY: number }>> {
+    const grid = new Map<string, Array<{ x: number; y: number; screenX: number; screenY: number }>>();
+    if (!currentUvEditorState) return grid;
+
+    for (const point of currentUvEditorState.points) {
+        if (excludedIds.has(point.id)) continue;
+        const screen = uvToScreen(point.x, point.y, transform);
+        const key = `${Math.floor(screen.x / cellSize)}:${Math.floor(screen.y / cellSize)}`;
+        const bucket = grid.get(key);
+        const candidate = {
+            x: point.x,
+            y: point.y,
+            screenX: screen.x,
+            screenY: screen.y,
+        };
+        if (bucket) {
+            bucket.push(candidate);
+        } else {
+            grid.set(key, [candidate]);
+        }
+    }
+
+    return grid;
+}
+
+function getUvGridSnapOffset(
+    updates: Array<{ pointId: number; x: number; y: number }>,
+): { x: number; y: number } | null {
+    const step = getUvGridStep();
+    const threshold = (6 * uvSnapStrength) / getUvPixelsPerUnit();
+    let bestX: number | null = null;
+    let bestY: number | null = null;
+
+    for (const update of updates) {
+        const targetX = Math.round(update.x / step) * step;
+        const targetY = Math.round(update.y / step) * step;
+        const diffX = targetX - update.x;
+        const diffY = targetY - update.y;
+
+        if (Math.abs(diffX) <= threshold && (bestX === null || Math.abs(diffX) < Math.abs(bestX))) {
+            bestX = diffX;
+        }
+        if (Math.abs(diffY) <= threshold && (bestY === null || Math.abs(diffY) < Math.abs(bestY))) {
+            bestY = diffY;
+        }
+    }
+
+    if (bestX === null && bestY === null) return null;
+    return {
+        x: bestX ?? 0,
+        y: bestY ?? 0,
+    };
+}
+
+function getUvGridStep(): number {
+    const pixelsPerUnit = getUvPixelsPerUnit();
+    if (pixelsPerUnit > 520) return 0.025;
+    if (pixelsPerUnit > 320) return 0.05;
+    if (pixelsPerUnit > 180) return 0.1;
+    return 0.25;
+}
+
+function clampScaleFactor(value: number): number {
+    if (!Number.isFinite(value)) return 1;
+    const magnitude = clamp(Math.abs(value), 0.08, 12);
+    return value < 0 ? -magnitude : magnitude;
+}
+
+function scaleSelectedUvPoints(factor: number): void {
+    if (!currentUvEditorState || selectedUvPointIds.size === 0) return;
+    const before = getSelectedPointSnapshot();
+    if (before.length === 0) return;
+    beginUvWheelUndoTransaction('UV 缩放');
+    const pivot = getSelectedUvPivot();
+    const clamped = clamp(factor, 0.4, 2.5);
+    applyUvPointUpdates(before.map((point) => ({
+        pointId: point.pointId,
+        x: pivot.x + (point.x - pivot.x) * clamped,
+        y: pivot.y + (point.y - pivot.y) * clamped,
+    })), { snap: true });
+    uvEditorStatus.textContent = `已缩放选区，影响 ${selectedUvPointIds.size} 个 UV 点`;
+}
+
+function rotateSelectedUvPoints(angleDeg: number): void {
+    if (!currentUvEditorState || selectedUvPointIds.size === 0) return;
+    const before = getSelectedPointSnapshot();
+    if (before.length === 0) return;
+    beginUvWheelUndoTransaction('UV 旋转');
+    const pivot = getSelectedUvPivot();
+    const radians = (angleDeg * Math.PI) / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    applyUvPointUpdates(before.map((point) => {
+        const dx = point.x - pivot.x;
+        const dy = point.y - pivot.y;
+        return {
+            pointId: point.pointId,
+            x: pivot.x + dx * cos - dy * sin,
+            y: pivot.y + dx * sin + dy * cos,
+        };
+    }), { snap: true });
+    uvEditorStatus.textContent = `已旋转选区，影响 ${selectedUvPointIds.size} 个 UV 点`;
+}
+
+function getSelectedUvPivot(): { x: number; y: number } {
+    const snapshot = getSelectedPointSnapshot();
+    if (snapshot.length === 0) return { x: 0.5, y: 0.5 };
+
+    const sum = snapshot.reduce((acc, point) => ({
+        x: acc.x + point.x,
+        y: acc.y + point.y,
+    }), { x: 0, y: 0 });
+
+    return {
+        x: sum.x / snapshot.length,
+        y: sum.y / snapshot.length,
+    };
+}
+
+function shouldSuppressCommittedUvSelection(): boolean {
+    return uvDragState.mode === 'box-select' && !uvDragState.additive && !uvDragState.subtractive;
+}
+
+function getUvPreviewPalette(): {
+    fill: string;
+    stroke: string;
+    pointFill: string;
+    pointStroke: string;
+} {
+    if (uvDragState.subtractive) {
+        return {
+            fill: 'rgba(183, 79, 92, 0.16)',
+            stroke: 'rgba(183, 79, 92, 0.82)',
+            pointFill: 'rgba(183, 79, 92, 0.94)',
+            pointStroke: 'rgba(84, 22, 30, 0.95)',
+        };
+    }
+
+    return {
+        fill: 'rgba(47, 111, 179, 0.16)',
+        stroke: 'rgba(47, 111, 179, 0.82)',
+        pointFill: 'rgba(47, 111, 179, 0.94)',
+        pointStroke: 'rgba(14, 38, 62, 0.95)',
+    };
+}
+
+function drawUvFaceSelection(
+    ctx: CanvasRenderingContext2D,
+    state: UvEditorState,
+    faceIds: Iterable<number>,
+    scale: number,
+    fillStyle: string,
+    strokeStyle: string,
+): void {
+    let hasFace = false;
+    ctx.beginPath();
+    for (const faceId of faceIds) {
+        const triangle = state.triangles[faceId];
+        if (!triangle) continue;
+        const a = state.points[triangle.a];
+        const b = state.points[triangle.b];
+        const c = state.points[triangle.c];
+        if (!a || !b || !c) continue;
+        hasFace = true;
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.lineTo(c.x, c.y);
+        ctx.closePath();
+    }
+    if (!hasFace) return;
+    ctx.fillStyle = fillStyle;
+    ctx.fill();
+    ctx.lineWidth = 1.2 / scale;
+    ctx.strokeStyle = strokeStyle;
+    ctx.stroke();
+}
+
+function drawUvEdgeSelection(
+    ctx: CanvasRenderingContext2D,
+    state: UvEditorState,
+    edgeIds: Iterable<string>,
+    scale: number,
+    strokeStyle: string,
+    lineWidth: number,
+): void {
+    let hasEdge = false;
+    ctx.beginPath();
+    for (const edgeId of edgeIds) {
+        const edge = currentUvEdgeMap.get(edgeId);
+        if (!edge) continue;
+        const a = state.points[edge.a];
+        const b = state.points[edge.b];
+        if (!a || !b) continue;
+        hasEdge = true;
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+    }
+    if (!hasEdge) return;
+    ctx.lineWidth = lineWidth / scale;
+    ctx.strokeStyle = strokeStyle;
+    ctx.stroke();
+}
+
+function drawUvPoints(
+    ctx: CanvasRenderingContext2D,
+    state: UvEditorState,
+    transform = getUvScreenTransform(),
+): void {
+    const dpr = window.devicePixelRatio || 1;
+    const radius = 3.4;
+    const previewPalette = getUvPreviewPalette();
+    const showCommitted = !shouldSuppressCommittedUvSelection();
+
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    for (const point of state.points) {
+        const screen = uvToScreen(point.x, point.y, transform);
+        if (
+            screen.x < -radius
+            || screen.x > transform.width + radius
+            || screen.y < -radius
+            || screen.y > transform.height + radius
+        ) {
+            continue;
+        }
+        ctx.beginPath();
+        ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
+
+        const previewed = previewUvPointIds.has(point.id);
+        const selected = showCommitted && selectedUvPointIds.has(point.id);
+
+        if (previewed) {
+            ctx.fillStyle = previewPalette.pointFill;
+            ctx.strokeStyle = previewPalette.pointStroke;
+        } else if (selected) {
+            ctx.fillStyle = '#2f6fb3';
+            ctx.strokeStyle = 'rgba(14, 38, 62, 0.95)';
+        } else {
+            ctx.fillStyle = 'rgba(255,255,255,0.92)';
+            ctx.strokeStyle = 'rgba(18, 28, 38, 0.45)';
+        }
+
+        ctx.fill();
+        ctx.lineWidth = 1;
+        ctx.stroke();
+    }
+    ctx.restore();
+}
+
+function drawUvSelectionBounds(
+    ctx: CanvasRenderingContext2D,
+    transform = getUvScreenTransform(),
+): void {
+    const anchors = getSelectionHandleAnchors();
+    if (!anchors || selectedUvPointIds.size === 0 || shouldSuppressCommittedUvSelection()) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const topLeft = uvToScreen(anchors.bounds.minX, anchors.bounds.maxY, transform);
+    const bottomRight = uvToScreen(anchors.bounds.maxX, anchors.bounds.minY, transform);
+    const width = bottomRight.x - topLeft.x;
+    const height = bottomRight.y - topLeft.y;
+
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.strokeStyle = 'rgba(47, 111, 179, 0.92)';
+    ctx.lineWidth = 1.25;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(topLeft.x + 0.5, topLeft.y + 0.5, width, height);
+    ctx.setLineDash([]);
+
+    const rotateAnchor = uvToScreen(anchors.handles.rotate.x, anchors.handles.rotate.y, transform);
+    const topCenter = uvToScreen(anchors.bounds.centerX, anchors.bounds.maxY, transform);
+    ctx.beginPath();
+    ctx.moveTo(topCenter.x, topCenter.y);
+    ctx.lineTo(rotateAnchor.x, rotateAnchor.y);
+    ctx.strokeStyle = 'rgba(47, 111, 179, 0.65)';
+    ctx.stroke();
+
+    for (const [type, handle] of Object.entries(anchors.handles) as Array<[SelectionHandleType, { x: number; y: number }]>) {
+        const screen = uvToScreen(handle.x, handle.y, transform);
+        ctx.beginPath();
+        if (type === 'rotate') {
+            ctx.arc(screen.x, screen.y, 6, 0, Math.PI * 2);
+        } else {
+            ctx.rect(screen.x - 5, screen.y - 5, 10, 10);
+        }
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.96)';
+        ctx.strokeStyle = 'rgba(47, 111, 179, 0.98)';
+        ctx.lineWidth = 1.35;
+        ctx.fill();
+        ctx.stroke();
+    }
+    ctx.restore();
+}
+
+function drawUvSelectionRect(ctx: CanvasRenderingContext2D): void {
+    if (uvDragState.mode !== 'box-select') return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = getUvSelectionRect();
+    const width = rect.right - rect.left;
+    const height = rect.bottom - rect.top;
+    const previewPalette = getUvPreviewPalette();
+
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = previewPalette.fill;
+    ctx.strokeStyle = previewPalette.stroke;
+    ctx.lineWidth = 1;
+    ctx.fillRect(rect.left, rect.top, width, height);
+    ctx.strokeRect(rect.left + 0.5, rect.top + 0.5, width, height);
+    ctx.restore();
+}
+
+function uvToScreen(
+    x: number,
+    y: number,
+    transform = getUvScreenTransform(),
+): { x: number; y: number } {
+    return {
+        x: transform.width / 2 + (x - uvView.centerX) * transform.axisScale.x,
+        y: transform.height / 2 - (y - uvView.centerY) * transform.axisScale.y,
+    };
+}
+
+function buildUvSegmentsFromState(state: UvEditorState): Float32Array {
+    const values: number[] = [];
+    const dedupe = new Set<string>();
+
+    const add = (aId: number, bId: number) => {
+        const a = state.points[aId];
+        const b = state.points[bId];
+        if (!a || !b) return;
+        if (Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6) return;
+        const key = aId < bId ? `${aId}:${bId}` : `${bId}:${aId}`;
+        if (dedupe.has(key)) return;
+        dedupe.add(key);
+        values.push(a.x, a.y, b.x, b.y);
+    };
+
+    for (const triangle of state.triangles) {
+        add(triangle.a, triangle.b);
+        add(triangle.b, triangle.c);
+        add(triangle.c, triangle.a);
+    }
+
+    return new Float32Array(values);
+}
+
+function refreshActiveTextureState(): void {
+    const state = viewer.getTextureState();
+    const active = selectedTextureSlot
+        ? state.slots.find((slot) => slot.slot === selectedTextureSlot) ?? null
+        : null;
+
+    if (!active) {
+        currentTextureSlotState = null;
+        currentUvEditorState = null;
+        currentUvEdges = [];
+        currentUvEdgeMap.clear();
+        resetUvEditorSelectionState();
+        resetUvTexturePatternCache();
+        setUvEditorIdleStatus();
+        renderUvEditor(null);
+        return;
+    }
+
+    currentTextureSlotState = active;
+    if (uvTexturePatternSource !== active.imageSource) resetUvTexturePatternCache();
+    currentUvEditorState = viewer.getUvEditorState();
+    rebuildUvEdgeCache();
+    pruneUvSelection();
+    syncTextureDetail(active);
+    setTextureTransformValues(active);
+    renderUvEditor(active);
+}
+
+function renderUvEditor(slot: TextureSlotState | null): void {
+    const ctx = ensureUvCanvasContext();
+    if (!ctx) return;
+
+    const width = uvEditorCanvas.width;
+    const height = uvEditorCanvas.height;
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = '#f7f9fb';
+    ctx.fillRect(0, 0, width, height);
+
+    drawUvBackdrop(ctx, width, height);
+
+    if (!slot || !slot.imageSource) {
+        uvEditorEmpty.hidden = false;
+        uvEditorEmpty.textContent = '当前贴图不可预览';
+        return;
+    }
+
+    const uvState = currentUvEditorState;
+    if (!uvState?.hasUv) {
+        uvEditorEmpty.hidden = false;
+        uvEditorEmpty.textContent = '当前模型没有 UV 坐标';
+        return;
+    }
+
+    uvEditorEmpty.hidden = true;
+
+    const axisScale = getUvAxisScale();
+    const scale = axisScale.min;
+    const dpr = window.devicePixelRatio || 1;
+    const screenMidX = width / 2;
+    const screenMidY = height / 2;
+    const viewWidth = width / (axisScale.x * dpr);
+    const viewHeight = height / (axisScale.y * dpr);
+    const viewLeft = uvView.centerX - viewWidth / 2;
+    const viewBottom = uvView.centerY - viewHeight / 2;
+
+    ctx.save();
+    ctx.setTransform(
+        axisScale.x * dpr,
+        0,
+        0,
+        -axisScale.y * dpr,
+        screenMidX - uvView.centerX * axisScale.x * dpr,
+        screenMidY + uvView.centerY * axisScale.y * dpr,
+    );
+
+    drawUvGrid(ctx, viewLeft, viewBottom, viewWidth, viewHeight, scale);
+    drawTexturePattern(ctx, slot, viewLeft, viewBottom, viewWidth, viewHeight);
+    drawUvBounds(ctx, scale);
+
+    const previewPalette = getUvPreviewPalette();
+    const showCommitted = !shouldSuppressCommittedUvSelection();
+    if (showCommitted && uvSelectionMode === 'face' && selectedUvFaceIds.size > 0) {
+        drawUvFaceSelection(
+            ctx,
+            uvState,
+            selectedUvFaceIds,
+            scale,
+            'rgba(47, 111, 179, 0.14)',
+            'rgba(47, 111, 179, 0.54)',
+        );
+    }
+
+    if (previewUvFaceIds.size > 0) {
+        drawUvFaceSelection(
+            ctx,
+            uvState,
+            previewUvFaceIds,
+            scale,
+            previewPalette.fill,
+            previewPalette.stroke,
+        );
+    }
+
+    drawUvSegments(ctx, uvState.segments, scale);
+
+    if (showCommitted && uvSelectionMode === 'edge' && selectedUvEdgeIds.size > 0) {
+        drawUvEdgeSelection(
+            ctx,
+            uvState,
+            selectedUvEdgeIds,
+            scale,
+            'rgba(47, 111, 179, 0.96)',
+            2.4,
+        );
+    }
+
+    if (previewUvEdgeIds.size > 0) {
+        drawUvEdgeSelection(
+            ctx,
+            uvState,
+            previewUvEdgeIds,
+            scale,
+            previewPalette.stroke,
+            2.8,
+        );
+    }
+
+    ctx.restore();
+
+    const screenTransform = getUvScreenTransform();
+    drawUvPoints(ctx, uvState, screenTransform);
+    drawUvSelectionBounds(ctx, screenTransform);
+    drawUvSelectionRect(ctx);
+}
+
+function drawUvBackdrop(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+): void {
+    ctx.fillStyle = '#f4f7fa';
+    ctx.fillRect(0, 0, width, height);
+}
+
+function drawUvGrid(
+    ctx: CanvasRenderingContext2D,
+    left: number,
+    bottom: number,
+    width: number,
+    height: number,
+    scale: number,
+): void {
+    const right = left + width;
+    const top = bottom + height;
+    const xStart = Math.floor(left);
+    const xEnd = Math.ceil(right);
+    const yStart = Math.floor(bottom);
+    const yEnd = Math.ceil(top);
+
+    ctx.beginPath();
+    for (let x = xStart; x <= xEnd; x += 1) {
+        ctx.moveTo(x, bottom);
+        ctx.lineTo(x, top);
+    }
+    for (let y = yStart; y <= yEnd; y += 1) {
+        ctx.moveTo(left, y);
+        ctx.lineTo(right, y);
+    }
+    ctx.lineWidth = 1 / scale;
+    ctx.strokeStyle = 'rgba(83, 102, 120, 0.16)';
+    ctx.stroke();
+}
+
+function drawTexturePattern(
+    ctx: CanvasRenderingContext2D,
+    slot: TextureSlotState,
+    left: number,
+    bottom: number,
+    width: number,
+    height: number,
+): void {
+    const drawable = slot.imageSource;
+    if (!drawable || !slot.width || !slot.height) return;
+
+    const repetition = isDefaultTextureTransform(slot) ? 'no-repeat' : 'repeat';
+    if (uvTexturePatternSource !== drawable || uvTexturePatternMode !== repetition || !uvTexturePattern) {
+        uvTexturePatternSource = drawable;
+        uvTexturePatternMode = repetition;
+        uvTexturePattern = ctx.createPattern(drawable, repetition);
+    }
+
+    const pattern = uvTexturePattern;
+    if (!pattern) return;
+
+    const transform = buildTexturePatternTransform(slot);
+    pattern.setTransform(transform);
+
+    ctx.fillStyle = pattern;
+    ctx.fillRect(left, bottom, width, height);
+}
+
+function drawUvBounds(ctx: CanvasRenderingContext2D, scale: number): void {
+    ctx.beginPath();
+    ctx.rect(0, 0, 1, 1);
+    ctx.lineWidth = 1.35 / scale;
+    ctx.strokeStyle = 'rgba(47, 111, 179, 0.88)';
+    ctx.stroke();
+}
+
+function drawUvSegments(
+    ctx: CanvasRenderingContext2D,
+    segments: Float32Array,
+    scale: number,
+): void {
+    if (segments.length === 0) return;
+
+    ctx.beginPath();
+    for (let index = 0; index < segments.length; index += 4) {
+        ctx.moveTo(segments[index], segments[index + 1]);
+        ctx.lineTo(segments[index + 2], segments[index + 3]);
+    }
+    ctx.lineWidth = 1 / scale;
+    ctx.strokeStyle = 'rgba(16, 24, 32, 0.82)';
+    ctx.stroke();
+}
+
+function buildTexturePatternTransform(slot: TextureSlotState): DOMMatrix {
+    const rotation = (slot.rotation * Math.PI) / 180;
+    const cos = Math.cos(rotation);
+    const sin = Math.sin(rotation);
+    const repeatX = normalizeTextureRepeat(slot.repeatX);
+    const repeatY = normalizeTextureRepeat(slot.repeatY);
+    const textureWidth = Math.max(slot.width ?? 1, 1);
+    const textureHeight = Math.max(slot.height ?? 1, 1);
+    const centerX = 0.5;
+    const centerY = 0.5;
+
+    const uvMatrix = new DOMMatrix([
+        repeatX * cos,
+        -repeatY * sin,
+        repeatX * sin,
+        repeatY * cos,
+        -repeatX * (cos * centerX + sin * centerY) + centerX + slot.offsetX,
+        -repeatY * (-sin * centerX + cos * centerY) + centerY + slot.offsetY,
+    ]);
+
+    const baseMatrix = new DOMMatrix([
+        1 / textureWidth,
+        0,
+        0,
+        -1 / textureHeight,
+        0,
+        1,
+    ]);
+
+    const inverse = uvMatrix.inverse();
+    if (!isFiniteDomMatrix(inverse)) return baseMatrix;
+    return inverse.multiply(baseMatrix);
+}
+
+function isDefaultTextureTransform(slot: TextureTransform): boolean {
+    return nearlyEqual(slot.offsetX, 0)
+        && nearlyEqual(slot.offsetY, 0)
+        && nearlyEqual(slot.repeatX, 1)
+        && nearlyEqual(slot.repeatY, 1)
+        && nearlyEqual(slot.rotation, 0);
+}
+
+function normalizeTextureRepeat(value: number): number {
+    return Number.isFinite(value) && Math.abs(value) > 1e-6 ? value : 1;
+}
+
+function isFiniteDomMatrix(matrix: DOMMatrix): boolean {
+    return Number.isFinite(matrix.a)
+        && Number.isFinite(matrix.b)
+        && Number.isFinite(matrix.c)
+        && Number.isFinite(matrix.d)
+        && Number.isFinite(matrix.e)
+        && Number.isFinite(matrix.f);
+}
+
+function ensureUvCanvasContext(): CanvasRenderingContext2D | null {
+    const rect = uvEditorCanvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const nextWidth = Math.max(1, Math.round(rect.width * dpr));
+    const nextHeight = Math.max(1, Math.round(rect.height * dpr));
+
+    if (uvEditorCanvas.width !== nextWidth || uvEditorCanvas.height !== nextHeight) {
+        uvEditorCanvas.width = nextWidth;
+        uvEditorCanvas.height = nextHeight;
+    }
+
+    return uvEditorCanvas.getContext('2d');
+}
+
+function getUvPixelsPerUnit(): number {
+    return getUvAxisScale().min;
+}
+
+function getUvAxisScale(): { x: number; y: number; min: number } {
+    const rect = uvEditorCanvas.getBoundingClientRect();
+    const textureWidth = Math.max(currentTextureSlotState?.width ?? Math.min(rect.width, rect.height), 1);
+    const textureHeight = Math.max(currentTextureSlotState?.height ?? Math.min(rect.width, rect.height), 1);
+    const scaleX = Math.max(64, textureWidth * uvView.zoom);
+    const scaleY = Math.max(64, textureHeight * uvView.zoom);
+    return {
+        x: scaleX,
+        y: scaleY,
+        min: Math.max(64, Math.min(scaleX, scaleY)),
+    };
+}
+
+function getUvScreenTransform(): UvScreenTransform {
+    const rect = uvEditorCanvas.getBoundingClientRect();
+    return {
+        width: rect.width,
+        height: rect.height,
+        axisScale: getUvAxisScaleForRect(rect),
+    };
+}
+
+function getUvAxisScaleForRect(rect: DOMRect): UvScreenTransform['axisScale'] {
+    const textureWidth = Math.max(currentTextureSlotState?.width ?? Math.min(rect.width, rect.height), 1);
+    const textureHeight = Math.max(currentTextureSlotState?.height ?? Math.min(rect.width, rect.height), 1);
+    const scaleX = Math.max(64, textureWidth * uvView.zoom);
+    const scaleY = Math.max(64, textureHeight * uvView.zoom);
+    return {
+        x: scaleX,
+        y: scaleY,
+        min: Math.max(64, Math.min(scaleX, scaleY)),
+    };
+}
+
+function screenToUv(
+    x: number,
+    y: number,
+    transform = getUvScreenTransform(),
+): { x: number; y: number } {
+    return {
+        x: uvView.centerX + (x - transform.width / 2) / transform.axisScale.x,
+        y: uvView.centerY - (y - transform.height / 2) / transform.axisScale.y,
+    };
+}
+
+function resetUvView(): void {
+    uvView.centerX = 0.5;
+    uvView.centerY = 0.5;
+    uvView.zoom = 1;
+}
+
+function bindNumericPair(
+    range: HTMLInputElement,
+    input: HTMLInputElement,
+    onApply: (value: number) => void,
+    hooks: {
+        onBegin?: () => void;
+        onCommit?: () => void;
+    } = {},
+): void {
+    const min = Number(range.min || input.min || 0);
+    const max = Number(range.max || input.max || 100);
+    let editing = false;
+
+    const normalize = (value: number): number => {
+        if (!Number.isFinite(value)) return Number(range.value || input.value || 0);
+        return clamp(value, min, max);
+    };
+
+    const begin = () => {
+        if (editing) return;
+        editing = true;
+        hooks.onBegin?.();
+    };
+
+    const commit = () => {
+        if (!editing) return;
+        editing = false;
+        hooks.onCommit?.();
+    };
+
+    const apply = (value: number) => {
+        const next = normalize(value);
+        const precision = range.step.includes('.') ? range.step.split('.')[1]?.length ?? 2 : 0;
+        range.value = next.toFixed(precision);
+        input.value = next.toFixed(precision);
+        onApply(next);
+    };
+
+    range.addEventListener('pointerdown', begin);
+    range.addEventListener('focus', begin);
+    input.addEventListener('focus', begin);
+
+    range.addEventListener('input', () => {
+        begin();
+        apply(Number(range.value));
+    });
+    range.addEventListener('change', () => {
+        apply(Number(range.value));
+        commit();
+    });
+    input.addEventListener('change', () => {
+        begin();
+        apply(Number(input.value));
+        commit();
+    });
+    range.addEventListener('blur', commit);
+    input.addEventListener('blur', commit);
+}
+
+function setNumericPairValue(
+    range: HTMLInputElement,
+    input: HTMLInputElement,
+    value: number,
+): void {
+    const precision = range.step.includes('.') ? range.step.split('.')[1]?.length ?? 2 : 0;
+    const next = Number.isFinite(value) ? value : Number(range.value || input.value || 0);
+    range.value = next.toFixed(precision);
+    input.value = next.toFixed(precision);
+}
+
+function showLoading(message: string): void {
+    loadingCount += 1;
+    loadingMessage = message;
+    loadingText.textContent = message;
+    loading.hidden = false;
+    syncDocumentState();
+}
+
+function hideLoading(): void {
+    loadingCount = Math.max(0, loadingCount - 1);
+    if (loadingCount > 0) return;
+    loadingMessage = '';
+    loading.hidden = true;
+    syncDocumentState();
+}
+
+function showToast(message: string, type: 'success' | 'error' | 'info' = 'info'): void {
+    toast.textContent = message;
+    toast.className = `toast show ${type}`.trim();
+    clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => {
+        toast.classList.remove('show', 'success', 'error', 'info');
+    }, 2600);
+}
+
+function applyLayout(): void {
+    layoutState.inspectorWidth = clampInspectorWidth(layoutState.inspectorWidth);
+    root.style.setProperty('--inspector-width', `${layoutState.inspectorWidth}px`);
+    rightResizer.setAttribute('aria-valuemin', '280');
+    rightResizer.setAttribute('aria-valuemax', String(getMaxInspectorWidth()));
+    rightResizer.setAttribute('aria-valuenow', String(layoutState.inspectorWidth));
+    applyInspectorState();
+    applyContentMode();
+}
+
+function setContentMode(mode: ContentMode): void {
+    if (layoutState.contentMode === mode) return;
+    layoutState.contentMode = mode;
+    applyContentMode();
+    persistLayout();
+}
+
+function applyContentMode(): void {
+    const uvActive = layoutState.contentMode === 'uv';
+
+    viewport.classList.toggle('active', !uvActive);
+    uvWorkspace.classList.toggle('active', uvActive);
+
+    btnModeModel.classList.toggle('active', !uvActive);
+    btnModeModel.setAttribute('aria-pressed', String(!uvActive));
+    btnModeUv.classList.toggle('active', uvActive);
+    btnModeUv.setAttribute('aria-pressed', String(uvActive));
+
+    requestAnimationFrame(() => {
+        if (uvActive) renderUvEditor(currentTextureSlotState);
+    });
+}
+
+function applyInspectorState(): void {
+    inspectorTabs.forEach((button) => {
+        const isActive = button.dataset.inspectorTab === layoutState.activeTab;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-selected', String(isActive));
+        button.tabIndex = isActive ? 0 : -1;
+    });
+
+    inspectorViews.forEach((view) => {
+        const isActive = view.dataset.inspectorView === layoutState.activeTab;
+        view.classList.toggle('active', isActive);
+        view.hidden = !isActive;
+    });
+
+    inspectorGroups.forEach((group) => {
+        const id = group.dataset.groupId;
+        if (!id) return;
+        group.open = layoutState.groups[id] ?? true;
+    });
+}
+
+function persistLayout(): void {
+    try {
+        localStorage.setItem(LAYOUT_KEY, JSON.stringify(layoutState));
+    } catch {
+        // Layout persistence is a convenience; editing and viewing should keep working if storage is blocked.
+    }
+}
+
+function loadLayout(): LayoutState {
+    try {
+        const raw = localStorage.getItem(LAYOUT_KEY);
+        if (!raw) return structuredClone(DEFAULT_LAYOUT);
+        const source = JSON.parse(raw) as Partial<LayoutState>;
+        return {
+            inspectorWidth: typeof source.inspectorWidth === 'number'
+                ? clampInspectorWidth(source.inspectorWidth)
+                : DEFAULT_LAYOUT.inspectorWidth,
+            activeTab: isInspectorTab(source.activeTab) ? source.activeTab : DEFAULT_LAYOUT.activeTab,
+            contentMode: isContentMode(source.contentMode) ? source.contentMode : DEFAULT_LAYOUT.contentMode,
+            groups: {
+                ...DEFAULT_LAYOUT.groups,
+                ...(typeof source.groups === 'object' && source.groups ? source.groups : {}),
+            },
+        };
+    } catch {
+        return structuredClone(DEFAULT_LAYOUT);
+    }
+}
+
+function clampInspectorWidth(width: number): number {
+    return clamp(width, 280, getMaxInspectorWidth());
+}
+
+function getMaxInspectorWidth(): number {
+    return Math.max(280, Math.min(520, Math.floor(window.innerWidth * 0.42)));
+}
+
+function updateWindowTitle(name: string): void {
+    if (!inNative) return;
+    const title = name ? `MeshScope 3D - ${name}` : 'MeshScope 3D';
+    void win.setTitle(title);
+}
+
+function setText(elements: HTMLElement[], value: string): void {
+    elements.forEach((element) => {
+        element.textContent = value;
+    });
+}
+
+function formatVector(vector: { x: number; y: number; z: number }): string {
+    return `${vector.x.toFixed(2)} × ${vector.y.toFixed(2)} × ${vector.z.toFixed(2)}`;
+}
+
+function clamp(value: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, value));
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    if (target.isContentEditable) return true;
+    return target instanceof HTMLInputElement
+        || target instanceof HTMLTextAreaElement
+        || target instanceof HTMLSelectElement;
+}
+
+function isFileDrag(event: DragEvent): boolean {
+    return Array.from(event.dataTransfer?.types ?? []).includes('Files');
+}
+
+function isInspectorTab(value: unknown): value is InspectorTab {
+    return value === 'overview' || value === 'properties' || value === 'animation' || value === 'textures';
+}
+
+function isContentMode(value: unknown): value is ContentMode {
+    return value === 'model' || value === 'uv';
+}
+
+function isUvSelectionMode(value: unknown): value is UvSelectionMode {
+    return value === 'vertex' || value === 'edge' || value === 'face';
+}
+
+function isMaterialEditMode(value: unknown): value is MaterialEditMode {
+    return value === 'original' || value === 'solid' || value === 'xray';
+}
+
+function isTextureSlotId(value: unknown): value is TextureSlotId {
+    return value === 'map'
+        || value === 'normalMap'
+        || value === 'roughnessMap'
+        || value === 'metalnessMap'
+        || value === 'emissiveMap'
+        || value === 'alphaMap'
+        || value === 'aoMap'
+        || value === 'bumpMap';
+}
+
+function escapeHtml(value: string): string {
+    return value
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+}
+
+function createSampleModel(): Object3D {
+    const geometry = new BoxGeometry(1.6, 1.6, 1.6);
+    const material = new MeshStandardMaterial({
+        color: 0x9bb4cc,
+        metalness: 0.02,
+        roughness: 0.82,
+    });
+    const cube = new Mesh(geometry, material);
+    cube.name = '内置示例立方体';
+    cube.position.y = 0.8;
+    return cube;
+}
+
+function fileNameOfPath(path: string): string {
+    const normalized = path.replaceAll('/', '\\');
+    const index = normalized.lastIndexOf('\\');
+    return index >= 0 ? normalized.slice(index + 1) : normalized;
+}

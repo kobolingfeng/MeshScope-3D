@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MeshScope 3D</title>
+    <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+    <div class="app-shell">
+        <header class="titlebar" id="titlebar">
+            <div class="titlebar-brand">
+                <div class="titlebar-emblem" aria-hidden="true">
+                    <div class="titlebar-emblem-core"></div>
+                    <div class="titlebar-emblem-ring"></div>
+                </div>
+                <div class="titlebar-copy">
+                    <strong class="titlebar-title">MeshScope 3D</strong>
+                    <span class="titlebar-subtitle" id="titlebar-scene-state">等待载入模型</span>
+                </div>
+            </div>
+
+            <button class="titlebar-tool" id="btn-reset-layout" type="button" title="重置右侧面板宽度" aria-label="重置右侧面板宽度">
+                <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20 12a8 8 0 1 1-2.34-5.66"></path>
+                    <path d="M20 4v6h-6"></path>
+                </svg>
+            </button>
+
+            <div class="titlebar-controls">
+                <button class="titlebar-btn" id="tb-min" type="button" title="最小化" aria-label="最小化窗口">
+                    <svg viewBox="0 0 10 1" aria-hidden="true"><rect width="10" height="1"/></svg>
+                </button>
+                <button class="titlebar-btn" id="tb-max" type="button" title="最大化" aria-label="最大化或还原窗口">
+                    <svg viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1"/></svg>
+                </button>
+                <button class="titlebar-btn close" id="tb-close" type="button" title="关闭" aria-label="关闭窗口">
+                    <svg viewBox="0 0 10 10" aria-hidden="true">
+                        <line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" stroke-width="1.2"/>
+                        <line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" stroke-width="1.2"/>
+                    </svg>
+                </button>
+            </div>
+        </header>
+
+        <section class="toolbar panel">
+            <div class="toolbar-group">
+                <button class="btn primary" id="btn-open" type="button">
+                    <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 7.5h6l2 2H20v9.5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7.5Z"></path>
+                        <path d="m12 11.5 0 6"></path>
+                        <path d="m9.5 15 2.5 2.5 2.5-2.5"></path>
+                    </svg>
+                    <span>打开</span>
+                </button>
+                <button class="btn" id="btn-save" type="button" disabled>
+                    <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M5 4h12l2 2v14H5z"></path>
+                        <path d="M8 4v6h8V4"></path>
+                        <path d="M8 16h8"></path>
+                    </svg>
+                    <span>保存</span>
+                </button>
+                <button class="btn" id="btn-save-as" type="button" disabled>
+                    <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M5 4h11l3 3v13H5z"></path>
+                        <path d="M8 4v6h7"></path>
+                        <path d="M12 14v5"></path>
+                        <path d="m9.5 16.5 2.5 2.5 2.5-2.5"></path>
+                    </svg>
+                    <span>另存为</span>
+                </button>
+                <button class="btn" id="btn-reset" type="button">
+                    <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M20 12a8 8 0 1 1-2.34-5.66"></path>
+                        <path d="M20 4v6h-6"></path>
+                    </svg>
+                    <span>重置视图</span>
+                </button>
+                <button class="btn subtle" id="btn-clear" type="button" disabled>
+                    <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M4 7h16"></path>
+                        <path d="M9 7V4h6v3"></path>
+                        <path d="m7.5 7 .8 11a1 1 0 0 0 1 .93h5.4a1 1 0 0 0 1-.93l.8-11"></path>
+                    </svg>
+                    <span>清空</span>
+                </button>
+                <button class="btn icon-btn" id="btn-undo" type="button" title="撤回 (Ctrl+Z)" aria-label="撤回" disabled>
+                    <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M9 7H4v5"></path>
+                        <path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4 9.4"></path>
+                    </svg>
+                    <span>撤回</span>
+                </button>
+                <button class="btn icon-btn" id="btn-redo" type="button" title="重做 (Ctrl+Y / Ctrl+Shift+Z)" aria-label="重做" disabled>
+                    <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M15 7h5v5"></path>
+                        <path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3L20 9.4"></path>
+                    </svg>
+                    <span>重做</span>
+                </button>
+                <input type="file" id="file-input" accept=".gltf,.glb,.obj,.mtl,.stl,.ply,.fbx,.png,.jpg,.jpeg,.webp,.bmp,.gif,.tga" multiple hidden>
+            </div>
+
+            <div class="toolbar-group toolbar-group-toggles">
+                <label class="toggle-chip">
+                    <input type="checkbox" id="tog-wire">
+                    <span>线框</span>
+                </label>
+                <label class="toggle-chip">
+                    <input type="checkbox" id="tog-grid" checked>
+                    <span>网格</span>
+                </label>
+                <label class="toggle-chip">
+                    <input type="checkbox" id="tog-axes" checked>
+                    <span>轴线</span>
+                </label>
+                <label class="toggle-chip">
+                    <input type="checkbox" id="tog-bg" checked>
+                    <span>浅底</span>
+                </label>
+            </div>
+
+            <div class="toolbar-group toolbar-group-viewmode">
+                <div class="segmented-control view-mode-switch" role="group" aria-label="工作区模式">
+                    <button id="btn-mode-model" class="segment-btn active" type="button" aria-pressed="true">模型</button>
+                    <button id="btn-mode-uv" class="segment-btn" type="button" aria-pressed="false">UV</button>
+                </div>
+            </div>
+
+        </section>
+
+        <section class="document-strip panel">
+            <div class="document-strip-title">文档</div>
+            <div class="document-tabs" id="document-tabs"></div>
+            <div class="document-status">
+                <span id="toolbar-scene-state">等待载入模型</span>
+                <span id="toolbar-model-name">未加载</span>
+                <span><strong id="toolbar-fps">—</strong> FPS</span>
+            </div>
+        </section>
+
+        <main class="main-layout">
+            <div class="content-stack">
+                <section class="viewport panel content-page active" id="viewport" aria-label="3D 模型视图">
+                    <canvas id="canvas" role="img" aria-label="3D 模型预览画布"></canvas>
+
+                    <div class="anim-bar" id="anim-bar" hidden>
+                        <button class="anim-btn anim-btn-play" id="anim-play" type="button" title="播放 / 暂停 (Space)" aria-label="播放或暂停动画">
+                            <svg class="anim-icon-play" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M8 5l12 7-12 7z"></path>
+                            </svg>
+                            <svg class="anim-icon-pause" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M7 5h4v14H7zM13 5h4v14h-4z"></path>
+                            </svg>
+                        </button>
+                        <button class="anim-btn anim-btn-stop" id="anim-stop" type="button" title="回到起点" aria-label="停止动画并回到起点">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M6 6h12v12H6z"></path>
+                            </svg>
+                        </button>
+                        <select class="anim-clip-select" id="anim-clip" aria-label="选择动画"></select>
+                        <button class="anim-edit-btn" id="anim-edit-open" type="button">编辑</button>
+                        <div class="anim-progress">
+                            <input type="range" id="anim-time" min="0" max="1" step="0.001" value="0">
+                            <span class="anim-time-label" id="anim-time-label">0.00 / 0.00s</span>
+                        </div>
+                        <label class="anim-toggle" title="循环播放">
+                            <input type="checkbox" id="anim-loop" checked>
+                            <span>循环</span>
+                        </label>
+                        <label class="anim-speed">
+                            <span>速度</span>
+                            <input id="anim-speed" type="number" min="0" max="4" step="0.1" value="1">
+                            <span class="anim-speed-suffix">×</span>
+                        </label>
+                        <span class="anim-summary" id="anim-summary"></span>
+                    </div>
+
+                    <div class="loading" id="loading" hidden>
+                        <div class="loading-spinner" aria-hidden="true"></div>
+                        <span id="loading-text">正在加载模型…</span>
+                    </div>
+                </section>
+
+                <section class="uv-workspace panel content-page" id="uv-workspace" aria-label="UV 贴图编辑工作区">
+                    <div class="uv-workspace-head">
+                        <div class="uv-workspace-copy">
+                            <strong class="uv-workspace-title">UV 工作区</strong>
+                            <span class="uv-workspace-subtitle">大画布查看与编辑 UV 映射</span>
+                        </div>
+                        <div class="uv-local-toolbar" aria-label="UV 工具">
+                            <div class="segmented-control" role="group" aria-label="UV 选择模式">
+                                <button id="uv-select-vertex" class="segment-btn active" type="button" data-uv-select-mode="vertex" aria-pressed="true">顶点</button>
+                                <button id="uv-select-edge" class="segment-btn" type="button" data-uv-select-mode="edge" aria-pressed="false">边</button>
+                                <button id="uv-select-face" class="segment-btn" type="button" data-uv-select-mode="face" aria-pressed="false">面</button>
+                            </div>
+                            <label class="uv-inline-toggle">
+                                <span class="control-label">吸附</span>
+                                <input id="uv-snap-enabled" type="checkbox" checked>
+                            </label>
+                            <label class="uv-snap-strength">
+                                <span class="control-label">强度</span>
+                                <input id="uv-snap-strength-range" type="range" min="0.25" max="3" step="0.05" value="1">
+                                <input id="uv-snap-strength-input" class="mini-input" type="number" min="0.25" max="3" step="0.05" value="1">
+                            </label>
+                            <button id="btn-open-uv-tab" class="mini-btn" type="button">贴图属性</button>
+                        </div>
+                    </div>
+
+                    <div class="uv-workspace-body">
+                        <div class="texture-preview-frame uv-editor-frame uv-editor-frame-large" id="uv-editor-frame">
+                            <canvas id="uv-editor-canvas" class="uv-editor-canvas" role="img" aria-label="UV 映射编辑画布"></canvas>
+                            <div id="uv-editor-empty" class="texture-preview-fallback">无 UV 预览</div>
+                            <div class="uv-editor-hud">
+                                <span id="uv-editor-status">顶点模式 | Shift加选 Ctrl减选 | Alt/中键平移 | 滚轮缩放 | Ctrl缩放选区 Alt旋转选区 | 吸附×1.00</span>
+                            </div>
+                        </div>
+
+                        <div class="property-grid texture-meta uv-workspace-meta">
+                            <span class="property-label">槽位</span>
+                            <strong class="property-value" id="tex-slot-name">—</strong>
+                            <span class="property-label">尺寸</span>
+                            <strong class="property-value" id="tex-dimensions">—</strong>
+                            <span class="property-label">来源</span>
+                            <strong class="property-value" id="tex-source-name">—</strong>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <div
+                class="sidebar-resizer"
+                id="right-resizer"
+                role="separator"
+                tabindex="0"
+                aria-orientation="vertical"
+                aria-label="调整属性检查器宽度"
+                aria-valuemin="280"
+                aria-valuemax="520"
+                aria-valuenow="336"
+            ></div>
+
+            <aside class="inspector panel" id="inspector">
+                <div class="panel-head">
+                    <div class="panel-title">
+                        <span>属性检查器</span>
+                    </div>
+                </div>
+
+                <div class="inspector-tabs" role="tablist" aria-label="属性标签">
+                    <button class="inspector-tab active" id="tab-overview" role="tab" type="button" data-inspector-tab="overview" aria-selected="true" aria-controls="panel-overview">概览</button>
+                    <button class="inspector-tab" id="tab-properties" role="tab" type="button" data-inspector-tab="properties" aria-selected="false" aria-controls="panel-properties">属性</button>
+                    <button class="inspector-tab" id="tab-animation" role="tab" type="button" data-inspector-tab="animation" aria-selected="false" aria-controls="panel-animation">动画</button>
+                    <button class="inspector-tab" id="tab-textures" role="tab" type="button" data-inspector-tab="textures" aria-selected="false" aria-controls="panel-textures">贴图</button>
+                </div>
+
+                <section class="inspector-view active" id="panel-overview" role="tabpanel" aria-labelledby="tab-overview" data-inspector-view="overview">
+                    <details class="inspector-group" open data-group-id="runtime">
+                        <summary>运行状态</summary>
+                        <div class="property-grid">
+                            <span class="property-label">状态</span>
+                            <strong class="property-value" id="scene-state">等待载入模型</strong>
+                            <span class="property-label">FPS</span>
+                            <strong class="property-value" id="fps">—</strong>
+                            <span class="property-label">模型</span>
+                            <strong class="property-value" id="model-name">未加载</strong>
+                        </div>
+                    </details>
+
+                    <details class="inspector-group" open data-group-id="stats">
+                        <summary>模型统计</summary>
+                        <div class="stats-grid">
+                            <div class="stat-cell">
+                                <span class="stat-label">顶点</span>
+                                <strong class="stat-value" id="stat-verts">0</strong>
+                            </div>
+                            <div class="stat-cell">
+                                <span class="stat-label">三角面</span>
+                                <strong class="stat-value" id="stat-faces">0</strong>
+                            </div>
+                            <div class="stat-cell">
+                                <span class="stat-label">边</span>
+                                <strong class="stat-value" id="stat-edges">0</strong>
+                            </div>
+                            <div class="stat-cell">
+                                <span class="stat-label">网格</span>
+                                <strong class="stat-value" id="stat-meshes">0</strong>
+                            </div>
+                        </div>
+                    </details>
+
+                    <details class="inspector-group" open data-group-id="document">
+                        <summary>文档信息</summary>
+                        <div class="property-grid">
+                            <span class="property-label">文档</span>
+                            <strong class="property-value" id="prop-doc-name">未命名</strong>
+                            <span class="property-label">状态</span>
+                            <strong class="property-value" id="prop-doc-state">空白</strong>
+                            <span class="property-label">文档数</span>
+                            <strong class="property-value" id="prop-doc-count">1</strong>
+                            <span class="property-label">尺寸</span>
+                            <strong class="property-value" id="prop-bounds">—</strong>
+                            <span class="property-label">中心</span>
+                            <strong class="property-value" id="prop-center">—</strong>
+                        </div>
+                    </details>
+                </section>
+
+                <section class="inspector-view" id="panel-properties" role="tabpanel" aria-labelledby="tab-properties" data-inspector-view="properties">
+                    <details class="inspector-group" open data-group-id="camera">
+                        <summary>相机</summary>
+                        <div class="control-stack">
+                            <label class="control-row">
+                                <span class="control-label">FOV</span>
+                                <input id="camera-fov-range" type="range" min="20" max="90" step="1" value="45">
+                                <input id="camera-fov-input" class="mini-input" type="number" min="20" max="90" step="1" value="45">
+                            </label>
+                            <label class="control-row">
+                                <span class="control-label">曝光</span>
+                                <input id="camera-exposure-range" type="range" min="0.4" max="2.5" step="0.05" value="1">
+                                <input id="camera-exposure-input" class="mini-input" type="number" min="0.4" max="2.5" step="0.05" value="1">
+                            </label>
+                        </div>
+
+                        <div class="property-grid">
+                            <span class="property-label">位置</span>
+                            <strong class="property-value" id="prop-camera-pos">—</strong>
+                            <span class="property-label">目标</span>
+                            <strong class="property-value" id="prop-camera-target">—</strong>
+                        </div>
+                    </details>
+
+                    <details class="inspector-group" open data-group-id="material">
+                        <summary>材质编辑</summary>
+                        <div class="control-stack">
+                            <label class="control-row control-row-select">
+                                <span class="control-label">模式</span>
+                                <select id="mat-mode" class="select-input">
+                                    <option value="original">原始材质</option>
+                                    <option value="solid">纯色覆写</option>
+                                    <option value="xray">X 光透视</option>
+                                </select>
+                            </label>
+                            <label class="switch-row">
+                                <span class="control-label">显示模型</span>
+                                <input id="mat-visible" type="checkbox" checked>
+                            </label>
+                            <label class="control-row">
+                                <span class="control-label">透明度</span>
+                                <input id="mat-opacity-range" type="range" min="0.1" max="1" step="0.01" value="1">
+                                <input id="mat-opacity-input" class="mini-input" type="number" min="0.1" max="1" step="0.01" value="1">
+                            </label>
+                            <label class="control-row">
+                                <span class="control-label">颜色</span>
+                                <input id="mat-color-input" class="color-input" type="color" value="#aab3c0">
+                            </label>
+                            <label class="control-row">
+                                <span class="control-label">粗糙度</span>
+                                <input id="mat-roughness-range" type="range" min="0" max="1" step="0.01" value="0.82">
+                                <input id="mat-roughness-input" class="mini-input" type="number" min="0" max="1" step="0.01" value="0.82">
+                            </label>
+                            <label class="control-row">
+                                <span class="control-label">金属度</span>
+                                <input id="mat-metalness-range" type="range" min="0" max="1" step="0.01" value="0.02">
+                                <input id="mat-metalness-input" class="mini-input" type="number" min="0" max="1" step="0.01" value="0.02">
+                            </label>
+                            <label class="switch-row">
+                                <span class="control-label">平面着色</span>
+                                <input id="mat-flat" type="checkbox">
+                            </label>
+                            <label class="switch-row">
+                                <span class="control-label">双面显示</span>
+                                <input id="mat-double-sided" type="checkbox">
+                            </label>
+                            <div class="control-actions">
+                                <button id="btn-reset-material" class="mini-btn" type="button">重置材质</button>
+                            </div>
+                        </div>
+                    </details>
+                </section>
+
+                <section class="inspector-view" id="panel-animation" role="tabpanel" aria-labelledby="tab-animation" data-inspector-view="animation">
+                    <details class="inspector-group" open data-group-id="animation">
+                        <summary>骨骼动画</summary>
+                        <div class="texture-empty" id="anim-editor-empty">当前模型没有骨骼动画。</div>
+                        <div class="control-stack" id="anim-editor" hidden>
+                            <label class="switch-row">
+                                <span class="control-label">显示骨架</span>
+                                <input id="anim-show-skeleton" type="checkbox" checked>
+                            </label>
+                            <label class="control-row control-row-select">
+                                <span class="control-label">选中骨骼</span>
+                                <select id="anim-bone-select" class="select-input"></select>
+                            </label>
+                            <div class="property-grid">
+                                <span class="property-label">当前</span>
+                                <strong class="property-value" id="anim-selected-bone">—</strong>
+                            </div>
+                            <div class="animation-toolbar">
+                                <div class="segmented-control" role="group" aria-label="骨骼变换模式">
+                                    <button id="anim-mode-rotate" class="segment-btn active" type="button" aria-pressed="true">旋转</button>
+                                    <button id="anim-mode-translate" class="segment-btn" type="button" aria-pressed="false">移动</button>
+                                </div>
+                                <label class="uv-inline-toggle">
+                                    <span class="control-label">IK</span>
+                                    <input id="anim-ik-enabled" type="checkbox">
+                                </label>
+                            </div>
+                            <div class="animation-keyframe-actions">
+                                <button id="btn-insert-keyframe" class="mini-btn" type="button">插入关键帧</button>
+                                <button id="btn-delete-keyframe" class="mini-btn" type="button">删除当前帧</button>
+                            </div>
+                            <div class="animation-keyframe-strip" id="anim-keyframe-strip" role="slider" aria-label="动画关键帧时间轴"></div>
+                            <label class="control-row control-row-select">
+                                <span class="control-label">名称</span>
+                                <input id="anim-clip-name" class="text-input" type="text" value="">
+                            </label>
+                            <div class="property-grid">
+                                <span class="property-label">时长</span>
+                                <strong class="property-value" id="anim-clip-duration">—</strong>
+                                <span class="property-label">轨道</span>
+                                <strong class="property-value" id="anim-track-count">—</strong>
+                            </div>
+                            <label class="control-row control-row-select">
+                                <span class="control-label">骨骼</span>
+                                <select id="anim-track-select" class="select-input"></select>
+                            </label>
+                            <div class="property-grid">
+                                <span class="property-label">类型</span>
+                                <strong class="property-value" id="anim-track-type">—</strong>
+                                <span class="property-label">关键帧</span>
+                                <strong class="property-value" id="anim-track-keys">—</strong>
+                            </div>
+                            <div class="animation-vector-panel" id="anim-transform-controls">
+                                <div class="vector-input-row">
+                                    <label class="vector-input">
+                                        <span id="anim-edit-x-label">X</span>
+                                        <input id="anim-edit-x" class="mini-input" type="number" step="0.01" value="0">
+                                    </label>
+                                    <label class="vector-input">
+                                        <span id="anim-edit-y-label">Y</span>
+                                        <input id="anim-edit-y" class="mini-input" type="number" step="0.01" value="0">
+                                    </label>
+                                    <label class="vector-input">
+                                        <span id="anim-edit-z-label">Z</span>
+                                        <input id="anim-edit-z" class="mini-input" type="number" step="0.01" value="0">
+                                    </label>
+                                </div>
+                                <div class="control-actions">
+                                    <button id="btn-apply-anim-transform" class="mini-btn" type="button">应用到轨道</button>
+                                </div>
+                            </div>
+                            <label class="control-row">
+                                <span class="control-label">时长倍率</span>
+                                <input id="anim-time-scale-range" type="range" min="0.1" max="3" step="0.01" value="1">
+                                <input id="anim-time-scale-input" class="mini-input" type="number" min="0.1" max="3" step="0.01" value="1">
+                            </label>
+                            <div class="control-actions">
+                                <button id="btn-apply-anim-time-scale" class="mini-btn" type="button">应用时长</button>
+                            </div>
+                        </div>
+                    </details>
+                </section>
+
+                <section class="inspector-view" id="panel-textures" role="tabpanel" aria-labelledby="tab-textures" data-inspector-view="textures">
+                    <details class="inspector-group" open data-group-id="textures">
+                        <summary>贴图槽</summary>
+                        <div class="texture-empty" id="texture-empty" hidden>当前材质没有 UV 贴图。</div>
+                        <div class="texture-browser texture-stack" id="texture-browser">
+                            <div class="texture-list texture-list-full" id="texture-list"></div>
+                            <div class="control-actions">
+                                <button id="btn-open-uv-workspace" class="mini-btn" type="button">打开 UV 工作区</button>
+                            </div>
+                        </div>
+                    </details>
+
+                    <details class="inspector-group" open data-group-id="uv-mapping">
+                        <summary>UV 映射</summary>
+                        <div class="control-stack">
+                            <label class="control-row">
+                                <span class="control-label">平移 X</span>
+                                <input id="tex-offset-x-range" type="range" min="-2" max="2" step="0.01" value="0">
+                                <input id="tex-offset-x-input" class="mini-input" type="number" min="-2" max="2" step="0.01" value="0">
+                            </label>
+                            <label class="control-row">
+                                <span class="control-label">平移 Y</span>
+                                <input id="tex-offset-y-range" type="range" min="-2" max="2" step="0.01" value="0">
+                                <input id="tex-offset-y-input" class="mini-input" type="number" min="-2" max="2" step="0.01" value="0">
+                            </label>
+                            <label class="control-row">
+                                <span class="control-label">重复 X</span>
+                                <input id="tex-repeat-x-range" type="range" min="0.1" max="8" step="0.01" value="1">
+                                <input id="tex-repeat-x-input" class="mini-input" type="number" min="0.1" max="8" step="0.01" value="1">
+                            </label>
+                            <label class="control-row">
+                                <span class="control-label">重复 Y</span>
+                                <input id="tex-repeat-y-range" type="range" min="0.1" max="8" step="0.01" value="1">
+                                <input id="tex-repeat-y-input" class="mini-input" type="number" min="0.1" max="8" step="0.01" value="1">
+                            </label>
+                            <label class="control-row">
+                                <span class="control-label">旋转</span>
+                                <input id="tex-rotation-range" type="range" min="-180" max="180" step="1" value="0">
+                                <input id="tex-rotation-input" class="mini-input" type="number" min="-180" max="180" step="1" value="0">
+                            </label>
+                            <div class="control-actions">
+                                <button id="btn-reset-texture-transform" class="mini-btn" type="button">重置映射</button>
+                            </div>
+                        </div>
+                    </details>
+                </section>
+            </aside>
+        </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
