@@ -425,14 +425,16 @@ export class Viewer {
         if (this.mixer && this.animationPlaying) {
             this.mixer.update(delta);
             const t = this.activeAction?.time ?? 0;
-            if (Math.abs(t - this.lastReportedTime) > 1 / 60) {
+            // 30 Hz UI throttle for animation callbacks — viewport renders at full FPS,
+            // but DOM/timeline updates don't need more than that and saved noticeable CPU.
+            if (Math.abs(t - this.lastReportedTime) > 1 / 30) {
                 this.lastReportedTime = t;
                 this.onAnimationTick(this.getAnimationState());
             }
         }
 
         this.controls.update();
-        this.updateSkeletonOverlay();
+        if (this.skeletonVisible) this.updateSkeletonOverlay();
         this.onRender();
         this.renderer.render(this.scene, this.camera);
 
@@ -1359,6 +1361,154 @@ export class Viewer {
         this.attachTransformTarget();
         this.updateSkeletonOverlay();
         this.onSkeletonChanged(this.getSkeletonEditorState());
+    }
+
+    getSelectedBoneLocalTrs(): {
+        boneIndex: number;
+        boneName: string;
+        position: [number, number, number];
+        quaternion: [number, number, number, number];
+        scale: [number, number, number];
+    } | null {
+        const bone = this.selectedBone;
+        if (!bone) return null;
+        const index = this.bones.indexOf(bone);
+        return {
+            boneIndex: index,
+            boneName: bone.name,
+            position: [bone.position.x, bone.position.y, bone.position.z],
+            quaternion: [bone.quaternion.x, bone.quaternion.y, bone.quaternion.z, bone.quaternion.w],
+            scale: [bone.scale.x, bone.scale.y, bone.scale.z],
+        };
+    }
+
+    applyLocalTrsToBone(
+        target: { boneIndex?: number; boneName?: string },
+        trs: {
+            position?: [number, number, number];
+            quaternion?: [number, number, number, number];
+            scale?: [number, number, number];
+        },
+    ): boolean {
+        const bone = this.resolveBone(target);
+        if (!bone) return false;
+        if (trs.position) bone.position.fromArray(trs.position);
+        if (trs.quaternion) bone.quaternion.fromArray(trs.quaternion);
+        if (trs.scale) bone.scale.fromArray(trs.scale);
+        bone.updateMatrixWorld(true);
+        if (this.ikEnabled && bone === this.selectedBone) this.solveIk();
+        this.updateSkeletonOverlay();
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+        return true;
+    }
+
+    findBoneIndexByName(name: string): number {
+        if (!name) return -1;
+        const direct = this.bones.findIndex((bone) => bone.name === name);
+        if (direct >= 0) return direct;
+        // Tolerate case-insensitive match as fallback.
+        const lower = name.toLowerCase();
+        return this.bones.findIndex((bone) => bone.name.toLowerCase() === lower);
+    }
+
+    getBoneNames(): string[] {
+        return this.bones.map((bone) => bone.name);
+    }
+
+    seekToNearestKeyframe(direction: 1 | -1): boolean {
+        const clip = this.animClips[this.activeClipIndex];
+        if (!clip || !this.activeAction) return false;
+        const current = this.activeAction.time;
+        const epsilon = 1e-4;
+        const times = new Set<number>();
+        for (const track of clip.tracks) {
+            for (const value of Array.from(track.times as ArrayLike<number>)) {
+                times.add(Number(value.toFixed(5)));
+            }
+        }
+        const sorted = [...times].sort((a, b) => a - b);
+        if (sorted.length === 0) return false;
+        const target = direction > 0
+            ? sorted.find((t) => t > current + epsilon)
+            : [...sorted].reverse().find((t) => t < current - epsilon);
+        if (target === undefined) return false;
+        this.seekAnimation(target);
+        return true;
+    }
+
+    duplicateAnimationClip(index: number, opts: { activate?: boolean } = {}): number {
+        const source = this.animClips[index];
+        if (!source || !this.mixer) return -1;
+
+        const cloned = source.clone();
+        cloned.name = `${source.name || `Clip ${index + 1}`} 副本`;
+        this.animClips.push(cloned);
+
+        const root = this.mixerRoot;
+        if (root) {
+            root.userData = root.userData ?? {};
+            root.userData.animations = this.animClips;
+        }
+
+        this.refreshAnimationClipMetas();
+        const newIndex = this.animClips.length - 1;
+        this.onAnimationsChanged(this.getAnimationState());
+        if (opts.activate) this.selectAnimationClip(newIndex, { autoPlay: false });
+        return newIndex;
+    }
+
+    deleteAnimationClip(index: number): boolean {
+        const clip = this.animClips[index];
+        if (!clip || !this.mixer) return false;
+
+        const wasActive = this.activeClipIndex === index;
+        this.mixer.stopAllAction();
+        this.mixer.uncacheClip(clip);
+        this.animClips.splice(index, 1);
+
+        const root = this.mixerRoot;
+        if (root) {
+            root.userData = root.userData ?? {};
+            root.userData.animations = this.animClips;
+        }
+
+        if (this.animClips.length === 0) {
+            this.activeAction = null;
+            this.activeClipIndex = -1;
+            this.animationPlaying = false;
+            this.animationFinished = false;
+            this.lastReportedTime = -1;
+            this.refreshAnimationClipMetas();
+            this.onAnimationsChanged(this.getAnimationState());
+            this.onSkeletonChanged(this.getSkeletonEditorState());
+            return true;
+        }
+
+        this.refreshAnimationClipMetas();
+        if (wasActive) {
+            this.activeAction = null;
+            this.activeClipIndex = -1;
+            this.animationPlaying = false;
+            const nextIndex = Math.min(index, this.animClips.length - 1);
+            this.selectAnimationClip(nextIndex, { autoPlay: false });
+        } else if (index < this.activeClipIndex) {
+            this.activeClipIndex -= 1;
+            this.onAnimationsChanged(this.getAnimationState());
+        } else {
+            this.onAnimationsChanged(this.getAnimationState());
+        }
+        return true;
+    }
+
+    private resolveBone(target: { boneIndex?: number; boneName?: string }): Bone | null {
+        if (typeof target.boneIndex === 'number' && this.bones[target.boneIndex]) {
+            return this.bones[target.boneIndex];
+        }
+        if (target.boneName) {
+            const idx = this.findBoneIndexByName(target.boneName);
+            if (idx >= 0) return this.bones[idx];
+        }
+        return null;
     }
 
     renameActiveAnimationClip(name: string): void {

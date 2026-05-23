@@ -104,19 +104,27 @@ type DocumentSession = {
     redoStack: UndoEntry[];
 };
 
+type ThemeMode = 'light' | 'dark' | 'auto';
+
 type LayoutState = {
     inspectorWidth: number;
+    leftSidebarWidth: number;
     activeTab: InspectorTab;
     contentMode: ContentMode;
+    theme: ThemeMode;
     groups: Record<string, boolean>;
 };
 
-const LAYOUT_KEY = 'portable-3d-viewer.layout.v7';
+const LAYOUT_KEY = 'portable-3d-viewer.layout.v9';
 const MAX_UNDO_STEPS = 80;
+const INSPECTOR_MIN_WIDTH = 280;
+const LEFT_SIDEBAR_MIN_WIDTH = 220;
 const DEFAULT_LAYOUT: LayoutState = {
     inspectorWidth: 336,
+    leftSidebarWidth: 260,
     activeTab: 'overview',
     contentMode: 'model',
+    theme: 'auto',
     groups: {
         runtime: true,
         stats: true,
@@ -133,7 +141,6 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) =>
     document.getElementById(id) as T;
 
 const root = document.documentElement;
-const titlebar = $('titlebar');
 const viewport = $('viewport');
 const uvWorkspace = $('uv-workspace');
 const canvas = $<HTMLCanvasElement>('canvas');
@@ -143,6 +150,19 @@ const loadingText = $('loading-text');
 const toast = $('toast');
 const documentTabs = $('document-tabs');
 const rightResizer = $('right-resizer');
+const leftResizer = $('left-resizer');
+const leftSidebar = $('left-sidebar');
+const leftSidebarMeta = $('left-sidebar-meta');
+const viewportEmpty = $('viewport-empty');
+const btnEmptyOpen = $<HTMLButtonElement>('btn-empty-open');
+const viewPresets = $('view-presets');
+const btnThemeToggle = $<HTMLButtonElement>('btn-theme-toggle');
+const statusFrame = $('status-frame');
+const statusFrameValue = $('status-frame-value');
+const statusBone = $('status-bone');
+const statusBoneValue = $('status-bone-value');
+const statusKeys = $('status-keys');
+const statusKeysValue = $('status-keys-value');
 
 const btnOpen = $<HTMLButtonElement>('btn-open');
 const btnSave = $<HTMLButtonElement>('btn-save');
@@ -163,7 +183,6 @@ const togAxes = $<HTMLInputElement>('tog-axes');
 const togBg = $<HTMLInputElement>('tog-bg');
 
 const toolbarSceneState = $('toolbar-scene-state');
-const titlebarSceneState = $('titlebar-scene-state');
 const toolbarFps = $('toolbar-fps');
 const toolbarModelName = $('toolbar-model-name');
 
@@ -281,11 +300,20 @@ const animTimeScaleRange = $<HTMLInputElement>('anim-time-scale-range');
 const animTimeScaleInput = $<HTMLInputElement>('anim-time-scale-input');
 const btnApplyAnimTimeScale = $<HTMLButtonElement>('btn-apply-anim-time-scale');
 
+type BonePoseClipboard = {
+    boneName: string;
+    position: [number, number, number];
+    quaternion: [number, number, number, number];
+    scale: [number, number, number];
+};
+
+let bonePoseClipboard: BonePoseClipboard | null = null;
+
 const inspectorTabs = Array.from(document.querySelectorAll<HTMLButtonElement>('.inspector-tab'));
 const inspectorViews = Array.from(document.querySelectorAll<HTMLElement>('.inspector-view'));
 const inspectorGroups = Array.from(document.querySelectorAll<HTMLDetailsElement>('.inspector-group'));
 
-const sceneStateEls = [titlebarSceneState, toolbarSceneState, sceneState];
+const sceneStateEls = [toolbarSceneState, sceneState];
 const fpsEls = [toolbarFps, fpsEl];
 const modelNameEls = [toolbarModelName, modelName];
 
@@ -461,10 +489,12 @@ viewer.onRender = () => {
 viewer.onAnimationsChanged = (state) => {
     refreshAnimationBar(state);
     syncAnimationEditor();
+    updateStatusChips();
 };
 
 viewer.onSkeletonChanged = () => {
     syncAnimationEditor();
+    updateStatusChips();
 };
 
 viewer.onBonePoseEditStarted = () => {
@@ -485,7 +515,8 @@ applyLayout();
 void bootstrap();
 
 async function bootstrap(): Promise<void> {
-    await setupTitlebar();
+    if (!inNative) document.body.classList.add('browser');
+    applyTheme();
     setupLayoutControls();
     setupContentModeControls();
     setupInspector();
@@ -499,6 +530,9 @@ async function bootstrap(): Promise<void> {
     setupUndoShortcuts();
     setupAnimationControls();
     setupNativeLaunchOpen();
+    setupThemeToggle();
+    setupViewPresets();
+    setupKeyboardShortcuts();
 
     viewer.setWireframe(togWire.checked);
     viewer.setGridVisible(togGrid.checked);
@@ -533,172 +567,119 @@ async function bootstrap(): Promise<void> {
     window.addEventListener('beforeunload', () => viewer.dispose());
 }
 
-async function setupTitlebar(): Promise<void> {
-    if (!inNative) {
-        document.body.classList.add('browser');
-        return;
-    }
+type SidebarSide = 'left' | 'right';
 
-    const frameless = await win.isFrameless().catch(() => false);
-    if (!frameless) {
-        document.body.classList.add('browser');
-        return;
-    }
-
-    const syncMaximized = async () => {
-        const maximized = await win.isMaximized().catch(() => false);
-        document.body.classList.toggle('window-maximized', maximized);
-    };
-
-    const toggleMaximized = async () => {
-        const maximized = await win.isMaximized().catch(() => false);
-        if (maximized) await win.restore().catch(() => false);
-        else await win.maximize().catch(() => false);
-        await syncMaximized();
-    };
-
-    $('tb-min').addEventListener('click', () => {
-        void win.minimize();
-    });
-    $('tb-max').addEventListener('click', () => {
-        void toggleMaximized();
-    });
-    $('tb-close').addEventListener('click', () => {
-        void win.close();
-    });
-
-    titlebar.addEventListener('mousedown', (event) => {
-        if (event.button !== 0) return;
-        const target = event.target as HTMLElement;
-        if (target.closest('.titlebar-controls, .titlebar-tool')) return;
-        void win.startDrag();
-    });
-
-    titlebar.addEventListener('dblclick', (event) => {
-        const target = event.target as HTMLElement;
-        if (target.closest('.titlebar-controls, .titlebar-tool')) return;
-        void toggleMaximized();
-    });
-
-    setupNativeEdgeResize();
-    win.onResized(() => {
-        void syncMaximized();
-    });
-    await syncMaximized();
-}
-
-function setupNativeEdgeResize(): void {
-    const cursorByEdge: Record<string, string> = {
-        left: 'ew-resize',
-        right: 'ew-resize',
-        top: 'ns-resize',
-        bottom: 'ns-resize',
-        'top-left': 'nwse-resize',
-        'top-right': 'nesw-resize',
-        'bottom-left': 'nesw-resize',
-        'bottom-right': 'nwse-resize',
-    };
-
-    const getEdge = (x: number, y: number): string | null => {
-        const threshold = 8;
-        const left = x <= threshold;
-        const right = window.innerWidth - x <= threshold;
-        const top = y <= threshold;
-        const bottom = window.innerHeight - y <= threshold;
-
-        if (top && left) return 'top-left';
-        if (top && right) return 'top-right';
-        if (bottom && left) return 'bottom-left';
-        if (bottom && right) return 'bottom-right';
-        if (left) return 'left';
-        if (right) return 'right';
-        if (top) return 'top';
-        if (bottom) return 'bottom';
-        return null;
-    };
-
-    document.addEventListener('mousemove', (event) => {
-        if (document.body.classList.contains('resizing-sidebar')) return;
-        const edge = getEdge(event.clientX, event.clientY);
-        document.documentElement.style.cursor = edge ? cursorByEdge[edge] : '';
-    });
-
-    document.addEventListener('mousedown', (event) => {
-        if (event.button !== 0) return;
-        const target = event.target as HTMLElement;
-        if (target.closest('#right-resizer')) return;
-        const edge = getEdge(event.clientX, event.clientY);
-        if (!edge) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        void win.startResize(edge);
-    }, true);
-}
+type SidebarSpec = {
+    side: SidebarSide;
+    element: HTMLElement;
+    getWidth: () => number;
+    setWidth: (next: number) => void;
+    clamp: (value: number) => number;
+    defaultWidth: number;
+    minWidth: number;
+    maxWidth: () => number;
+};
 
 function setupLayoutControls(): void {
+    const specs: SidebarSpec[] = [
+        {
+            side: 'left',
+            element: leftResizer,
+            getWidth: () => layoutState.leftSidebarWidth,
+            setWidth: (next) => { layoutState.leftSidebarWidth = next; },
+            clamp: clampLeftSidebarWidth,
+            defaultWidth: DEFAULT_LAYOUT.leftSidebarWidth,
+            minWidth: LEFT_SIDEBAR_MIN_WIDTH,
+            maxWidth: getMaxLeftSidebarWidth,
+        },
+        {
+            side: 'right',
+            element: rightResizer,
+            getWidth: () => layoutState.inspectorWidth,
+            setWidth: (next) => { layoutState.inspectorWidth = next; },
+            clamp: clampInspectorWidth,
+            defaultWidth: DEFAULT_LAYOUT.inspectorWidth,
+            minWidth: INSPECTOR_MIN_WIDTH,
+            maxWidth: getMaxInspectorWidth,
+        },
+    ];
+
     btnResetLayout.addEventListener('click', () => {
         layoutState.inspectorWidth = DEFAULT_LAYOUT.inspectorWidth;
+        layoutState.leftSidebarWidth = DEFAULT_LAYOUT.leftSidebarWidth;
         applyLayout();
         persistLayout();
-        showToast('右侧面板宽度已重置', 'success');
+        showToast('侧边栏宽度已重置', 'success');
     });
 
-    rightResizer.addEventListener('mousedown', (event) => {
-        if (event.button !== 0) return;
-        event.preventDefault();
+    for (const spec of specs) {
+        spec.element.addEventListener('mousedown', (event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
 
-        const startX = event.clientX;
-        const startWidth = layoutState.inspectorWidth;
-        document.body.classList.add('resizing-sidebar');
+            const startX = event.clientX;
+            const startWidth = spec.getWidth();
+            document.body.classList.add('resizing-sidebar');
+            spec.element.classList.add('active');
 
-        const onMove = (moveEvent: MouseEvent) => {
-            const delta = startX - moveEvent.clientX;
-            layoutState.inspectorWidth = clampInspectorWidth(startWidth + delta);
+            const onMove = (moveEvent: MouseEvent) => {
+                const delta = spec.side === 'right'
+                    ? startX - moveEvent.clientX
+                    : moveEvent.clientX - startX;
+                spec.setWidth(spec.clamp(startWidth + delta));
+                applyLayout();
+            };
+
+            const onUp = () => {
+                document.body.classList.remove('resizing-sidebar');
+                spec.element.classList.remove('active');
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup', onUp);
+                persistLayout();
+            };
+
+            window.addEventListener('mousemove', onMove);
+            window.addEventListener('mouseup', onUp);
+        });
+
+        spec.element.addEventListener('keydown', (event) => {
+            const step = event.shiftKey ? 32 : 12;
+            // Inward = grow this sidebar; outward = shrink.
+            const inwardKey = spec.side === 'right' ? 'ArrowLeft' : 'ArrowRight';
+            const outwardKey = spec.side === 'right' ? 'ArrowRight' : 'ArrowLeft';
+
+            if (event.key === inwardKey) {
+                event.preventDefault();
+                spec.setWidth(spec.clamp(spec.getWidth() + step));
+            } else if (event.key === outwardKey) {
+                event.preventDefault();
+                spec.setWidth(spec.clamp(spec.getWidth() - step));
+            } else if (event.key === 'Home') {
+                event.preventDefault();
+                spec.setWidth(spec.clamp(spec.maxWidth()));
+            } else if (event.key === 'End') {
+                event.preventDefault();
+                spec.setWidth(spec.clamp(spec.minWidth));
+            } else {
+                return;
+            }
             applyLayout();
-        };
-
-        const onUp = () => {
-            document.body.classList.remove('resizing-sidebar');
-            window.removeEventListener('mousemove', onMove);
-            window.removeEventListener('mouseup', onUp);
             persistLayout();
-        };
+        });
 
-        window.addEventListener('mousemove', onMove);
-        window.addEventListener('mouseup', onUp);
-    });
-
-    rightResizer.addEventListener('keydown', (event) => {
-        const step = event.shiftKey ? 32 : 12;
-        if (event.key === 'ArrowLeft') {
-            event.preventDefault();
-            layoutState.inspectorWidth = clampInspectorWidth(layoutState.inspectorWidth + step);
-        } else if (event.key === 'ArrowRight') {
-            event.preventDefault();
-            layoutState.inspectorWidth = clampInspectorWidth(layoutState.inspectorWidth - step);
-        } else if (event.key === 'Home') {
-            event.preventDefault();
-            layoutState.inspectorWidth = clampInspectorWidth(520);
-        } else if (event.key === 'End') {
-            event.preventDefault();
-            layoutState.inspectorWidth = clampInspectorWidth(280);
-        } else {
-            return;
-        }
-        applyLayout();
-        persistLayout();
-    });
-
-    rightResizer.addEventListener('dblclick', () => {
-        layoutState.inspectorWidth = DEFAULT_LAYOUT.inspectorWidth;
-        applyLayout();
-        persistLayout();
-    });
+        spec.element.addEventListener('dblclick', () => {
+            spec.setWidth(spec.defaultWidth);
+            applyLayout();
+            persistLayout();
+        });
+    }
 
     window.addEventListener('resize', () => {
-        const next = clampInspectorWidth(layoutState.inspectorWidth);
-        if (next === layoutState.inspectorWidth) return;
-        layoutState.inspectorWidth = next;
+        const nextInspector = clampInspectorWidth(layoutState.inspectorWidth);
+        const nextLeft = clampLeftSidebarWidth(layoutState.leftSidebarWidth);
+        if (nextInspector === layoutState.inspectorWidth && nextLeft === layoutState.leftSidebarWidth) return;
+        layoutState.inspectorWidth = nextInspector;
+        layoutState.leftSidebarWidth = nextLeft;
         applyLayout();
         persistLayout();
     });
@@ -852,6 +833,306 @@ function setupNativeLaunchOpen(): void {
     });
 }
 
+// ----- Theme -----------------------------------------------------------------
+
+const mediaPrefersDark = typeof window !== 'undefined' && window.matchMedia
+    ? window.matchMedia('(prefers-color-scheme: dark)')
+    : null;
+
+function applyTheme(): void {
+    const mode = layoutState.theme;
+    root.setAttribute('data-theme-mode', mode);
+    const resolved = mode === 'auto'
+        ? (mediaPrefersDark?.matches ? 'dark' : 'light')
+        : mode;
+    root.setAttribute('data-theme', resolved);
+}
+
+function cycleTheme(): void {
+    const order: ThemeMode[] = ['auto', 'light', 'dark'];
+    const next = order[(order.indexOf(layoutState.theme) + 1) % order.length];
+    layoutState.theme = next;
+    applyTheme();
+    persistLayout();
+    const label = next === 'light' ? '浅色' : next === 'dark' ? '深色' : '跟随系统';
+    showToast(`主题：${label}`, 'info');
+}
+
+function setupThemeToggle(): void {
+    btnThemeToggle.addEventListener('click', cycleTheme);
+    mediaPrefersDark?.addEventListener?.('change', () => {
+        if (layoutState.theme === 'auto') applyTheme();
+    });
+}
+
+// ----- View presets ----------------------------------------------------------
+
+function setupViewPresets(): void {
+    viewPresets.addEventListener('click', (event) => {
+        const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-preset]');
+        if (!button) return;
+        const preset = button.dataset.preset;
+        if (!preset) return;
+        applyViewPreset(preset);
+    });
+    btnEmptyOpen.addEventListener('click', () => {
+        fileInput.click();
+    });
+}
+
+function applyViewPreset(preset: string): void {
+    if (preset === 'frame') {
+        viewer.resetView();
+    } else if (
+        preset === 'front' || preset === 'back' || preset === 'left' ||
+        preset === 'right' || preset === 'top' || preset === 'bottom' || preset === 'iso'
+    ) {
+        viewer.setViewPreset(preset);
+    } else {
+        return;
+    }
+    syncPropertyPanelCamera();
+}
+
+// ----- Bone pose clipboard ---------------------------------------------------
+
+function copySelectedBonePose(): void {
+    const trs = viewer.getSelectedBoneLocalTrs();
+    if (!trs) {
+        showToast('未选中骨骼', 'info');
+        return;
+    }
+    bonePoseClipboard = {
+        boneName: trs.boneName,
+        position: trs.position,
+        quaternion: trs.quaternion,
+        scale: trs.scale,
+    };
+    showToast(`已复制 ${trs.boneName || '骨骼'} 姿态`, 'success');
+}
+
+function pasteBonePose(opts: { mirror: boolean }): void {
+    if (!bonePoseClipboard) {
+        showToast('剪贴板里没有骨骼姿态', 'info');
+        return;
+    }
+    const selected = viewer.getSelectedBoneLocalTrs();
+    if (!selected) {
+        showToast('未选中骨骼', 'info');
+        return;
+    }
+
+    const target = opts.mirror ? findMirroredBoneName(selected.boneName) : selected.boneName;
+    const targetIndex = target ? viewer.findBoneIndexByName(target) : selected.boneIndex;
+    if (targetIndex < 0) {
+        showToast(opts.mirror ? '没找到对称骨骼' : '骨骼未找到', 'error');
+        return;
+    }
+
+    runAnimationEdit(opts.mirror ? '镜像粘贴骨骼姿态' : '粘贴骨骼姿态', () => {
+        const source = bonePoseClipboard!;
+        const trs = opts.mirror
+            ? {
+                position: [-source.position[0], source.position[1], source.position[2]] as [number, number, number],
+                quaternion: [source.quaternion[0], -source.quaternion[1], -source.quaternion[2], source.quaternion[3]] as [number, number, number, number],
+                scale: source.scale,
+            }
+            : source;
+        viewer.applyLocalTrsToBone({ boneIndex: targetIndex }, trs);
+    });
+    showToast(opts.mirror ? `已镜像到 ${target}` : '已粘贴骨骼姿态', 'success');
+}
+
+function findMirroredBoneName(name: string): string | null {
+    if (!name) return null;
+    const replacements: Array<[RegExp, string]> = [
+        [/\.L$/i, '.R'], [/\.R$/i, '.L'],
+        [/_L$/i, '_R'],  [/_R$/i, '_L'],
+        [/^L_/i, 'R_'],  [/^R_/i, 'L_'],
+        [/^Left/i, 'Right'], [/^Right/i, 'Left'],
+        [/Left/g, 'Right'],  [/Right/g, 'Left'],
+        [/\bL\b/, 'R'], [/\bR\b/, 'L'],
+    ];
+    const names = new Set(viewer.getBoneNames());
+    for (const [pattern, replacement] of replacements) {
+        if (!pattern.test(name)) continue;
+        const candidate = name.replace(pattern, replacement);
+        if (candidate !== name && names.has(candidate)) return candidate;
+    }
+    return null;
+}
+
+// ----- Keyboard shortcuts ----------------------------------------------------
+
+function setupKeyboardShortcuts(): void {
+    window.addEventListener('keydown', (event) => {
+        if (event.defaultPrevented) return;
+        if (isEditableTarget(event.target)) return;
+
+        const key = event.key;
+        const code = event.code;
+        const noMods = !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
+        const ctrlOnly = (event.ctrlKey || event.metaKey) && !event.altKey;
+
+        // Ctrl+C / Ctrl+V / Ctrl+Shift+V — bone pose clipboard.
+        // Only when the skeleton overlay is visible (clear "rigging mode" signal),
+        // so we don't steal default browser copy/paste outside that mode.
+        const skeletonActive = viewer.getSkeletonEditorState().skeletonVisible
+            && Boolean(viewer.getSelectedBoneLocalTrs());
+        if (ctrlOnly && skeletonActive && key.toLowerCase() === 'c' && !event.shiftKey) {
+            event.preventDefault();
+            copySelectedBonePose();
+            return;
+        }
+        if (ctrlOnly && skeletonActive && key.toLowerCase() === 'v' && !event.shiftKey) {
+            if (bonePoseClipboard) {
+                event.preventDefault();
+                pasteBonePose({ mirror: false });
+                return;
+            }
+        }
+        if (ctrlOnly && skeletonActive && key.toLowerCase() === 'v' && event.shiftKey) {
+            if (bonePoseClipboard) {
+                event.preventDefault();
+                pasteBonePose({ mirror: true });
+                return;
+            }
+        }
+
+        // Ctrl+1/3/7 — opposite view presets.
+        if (ctrlOnly && !event.shiftKey) {
+            const ctrlViewKeys: Record<string, string> = {
+                '1': 'back',
+                '3': 'right',
+                '7': 'bottom',
+            };
+            if (ctrlViewKeys[key]) {
+                event.preventDefault();
+                applyViewPreset(ctrlViewKeys[key]);
+                return;
+            }
+        }
+
+        if (!noMods) return;
+
+        const state = viewer.getAnimationState();
+
+        // K — insert keyframe.
+        if (key.toLowerCase() === 'k') {
+            if (viewer.getSelectedBoneLocalTrs()) {
+                event.preventDefault();
+                runAnimationEdit('插入关键帧', () => viewer.insertSelectedBoneKeyframe());
+                showToast('已插入关键帧', 'success');
+            }
+            return;
+        }
+
+        // W / E — transform gizmo mode.
+        if (key.toLowerCase() === 'w') {
+            event.preventDefault();
+            setBoneTransformMode('translate');
+            return;
+        }
+        if (key.toLowerCase() === 'e') {
+            event.preventDefault();
+            setBoneTransformMode('rotate');
+            return;
+        }
+
+        // Q — toggle IK.
+        if (key.toLowerCase() === 'q') {
+            event.preventDefault();
+            animIkEnabledInput.checked = !animIkEnabledInput.checked;
+            viewer.setIkEnabled(animIkEnabledInput.checked);
+            return;
+        }
+
+        // , / .  — previous / next keyframe.
+        if (key === ',' || key === '.') {
+            if (!state.hasAnimations) return;
+            event.preventDefault();
+            const direction = key === '.' ? 1 : -1;
+            viewer.seekToNearestKeyframe(direction);
+            return;
+        }
+
+        // Home / End — jump to clip start/end.
+        if (key === 'Home') {
+            if (!state.hasAnimations) return;
+            event.preventDefault();
+            viewer.seekAnimation(0);
+            return;
+        }
+        if (key === 'End') {
+            if (!state.hasAnimations) return;
+            event.preventDefault();
+            viewer.seekAnimation(state.duration);
+            return;
+        }
+
+        // F — frame model.
+        if (key.toLowerCase() === 'f') {
+            event.preventDefault();
+            applyViewPreset('frame');
+            return;
+        }
+
+        // 1-7, 0 — view presets.
+        const viewKeys: Record<string, string> = {
+            '1': 'front',
+            '3': 'left',
+            '7': 'top',
+            '0': 'iso',
+        };
+        if (code in { Digit1: 1, Digit3: 1, Digit7: 1, Digit0: 1 } && viewKeys[key]) {
+            event.preventDefault();
+            applyViewPreset(viewKeys[key]);
+            return;
+        }
+    });
+}
+
+// ----- Empty state & status chips -------------------------------------------
+
+function syncViewportEmpty(): void {
+    const active = getActiveDocument();
+    const empty = Boolean(
+        active
+        && active.kind === 'sample'
+        && documents.length === 1
+        && !loadingMessage,
+    );
+    viewportEmpty.hidden = !empty;
+}
+
+function updateStatusChips(): void {
+    const animState = viewer.getAnimationState();
+    const skel = viewer.getSkeletonEditorState();
+
+    if (animState.hasAnimations) {
+        statusFrame.hidden = false;
+        const currentFrame = Math.round(animState.time * timelineFps);
+        const totalFrame = Math.round(animState.duration * timelineFps);
+        statusFrameValue.textContent = `${currentFrame} / ${totalFrame}`;
+    } else {
+        statusFrame.hidden = true;
+    }
+
+    if (skel.hasSkeleton && skel.selectedBoneName) {
+        statusBone.hidden = false;
+        statusBoneValue.textContent = skel.selectedBoneName;
+    } else {
+        statusBone.hidden = true;
+    }
+
+    if (selectedKeyframeTimes.length > 0) {
+        statusKeys.hidden = false;
+        statusKeysValue.textContent = String(selectedKeyframeTimes.length);
+    } else {
+        statusKeys.hidden = true;
+    }
+}
+
 function setupUndoShortcuts(): void {
     window.addEventListener('keydown', (event) => {
         if (event.defaultPrevented) return;
@@ -884,9 +1165,21 @@ function setupAnimationControls(): void {
     });
 
     animClipList.addEventListener('click', (event) => {
-        const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-clip-index]');
-        if (!button) return;
-        const index = Number(button.dataset.clipIndex);
+        const target = event.target as HTMLElement;
+        const action = target.closest<HTMLButtonElement>('.anim-clip-action');
+        if (action) {
+            event.stopPropagation();
+            const item = action.closest<HTMLElement>('[data-clip-index]');
+            const index = Number(item?.dataset.clipIndex);
+            if (!Number.isFinite(index)) return;
+            if (action.dataset.action === 'duplicate') duplicateClipAt(index);
+            else if (action.dataset.action === 'delete') deleteClipAt(index);
+            return;
+        }
+
+        const item = target.closest<HTMLElement>('[data-clip-index]');
+        if (!item) return;
+        const index = Number(item.dataset.clipIndex);
         if (!Number.isFinite(index)) return;
         const wasPlaying = viewer.getAnimationState().playing;
         selectedKeyframeTimes = [];
@@ -1084,11 +1377,17 @@ function refreshAnimationBar(state: AnimationPlaybackState): void {
         animTimeLabel.textContent = '—';
         animSummary.textContent = '';
         selectedKeyframeTimes = [];
+        leftSidebar.classList.add('is-empty');
+        leftSidebarMeta.textContent = '无动画';
         renderAnimationTimeline(viewer.getSkeletonEditorState(), state);
         return;
     }
 
     animBar.hidden = false;
+    leftSidebar.classList.remove('is-empty');
+    leftSidebarMeta.textContent = state.clips.length > 1
+        ? `${state.activeIndex + 1} / ${state.clips.length}`
+        : `${state.clips.length}`;
     renderAnimationClipList(state);
 
     animBar.classList.toggle('is-playing', state.playing);
@@ -1121,10 +1420,41 @@ function renderAnimationClipList(state: AnimationPlaybackState): void {
                 <button class="${className}" type="button" role="option" data-clip-index="${clip.index}"${selected}>
                     <span class="anim-clip-name">${escapeHtml(clip.name)}</span>
                     <span class="anim-clip-meta">${clip.duration.toFixed(2)}s · ${clip.tracks}</span>
+                    <span class="anim-clip-actions" aria-hidden="true">
+                        <span class="anim-clip-action" role="button" tabindex="0" data-action="duplicate" title="复制动画">
+                            <svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+                        </span>
+                        <span class="anim-clip-action danger" role="button" tabindex="0" data-action="delete" title="删除动画">
+                            <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7.5 7l.9 12a1 1 0 0 0 1 .9h5.2a1 1 0 0 0 1-.9L16.5 7"/></svg>
+                        </span>
+                    </span>
                 </button>
             `;
         }).join('')
         : '<div class="anim-list-empty">没有匹配动画</div>';
+}
+
+function duplicateClipAt(index: number): void {
+    const newIndex = viewer.duplicateAnimationClip(index, { activate: true });
+    if (newIndex < 0) {
+        showToast('复制失败', 'error');
+        return;
+    }
+    markActiveDocumentDirty();
+    showToast('动画已复制', 'success');
+}
+
+function deleteClipAt(index: number): void {
+    const state = viewer.getAnimationState();
+    const clip = state.clips[index];
+    if (!clip) return;
+    if (!window.confirm(`确定删除动画"${clip.name}"？此操作不可撤销。`)) return;
+    if (!viewer.deleteAnimationClip(index)) {
+        showToast('删除失败', 'error');
+        return;
+    }
+    markActiveDocumentDirty();
+    showToast('动画已删除', 'success');
 }
 
 function syncAnimationProgress(state: AnimationPlaybackState): void {
@@ -1140,6 +1470,7 @@ function syncAnimationProgress(state: AnimationPlaybackState): void {
     animTimeRangeSyncing = false;
 
     animTimeLabel.textContent = formatAnimationTime(time, duration);
+    updateStatusChips();
 }
 
 function formatAnimationTime(time: number, duration: number): string {
@@ -1247,7 +1578,28 @@ function syncTransformModeButtons(mode: BoneTransformMode): void {
     animModeTranslate.setAttribute('aria-pressed', String(!rotateActive));
 }
 
+let timelineRenderRaf = 0;
+
 function renderAnimationTimeline(
+    _skeletonState: SkeletonEditorState,
+    playbackState: AnimationPlaybackState,
+): void {
+    // Playhead tracks the cursor every call — no rAF gating.
+    updateTimelinePlayhead(playbackState);
+    // The expensive strip rebuild is coalesced to one per frame. retime
+    // drag fires this on every pointer-move; without coalescing 500-keyframe
+    // clips stutter.
+    if (timelineRenderRaf) return;
+    timelineRenderRaf = requestAnimationFrame(() => {
+        timelineRenderRaf = 0;
+        renderAnimationTimelineNow(
+            viewer.getSkeletonEditorState(),
+            viewer.getAnimationState(),
+        );
+    });
+}
+
+function renderAnimationTimelineNow(
     skeletonState: SkeletonEditorState,
     playbackState: AnimationPlaybackState,
 ): void {
@@ -1323,6 +1675,7 @@ function updateTimelineSelectionSummary(): void {
     btnTimelineClearSelection.disabled = count === 0;
     btnDeleteKeyframe.textContent = count > 0 ? `删除选中 ${count}` : '删除当前帧';
     animTimelineZoomLabel.textContent = `${Math.round(timelineZoom * 100)}%`;
+    updateStatusChips();
 }
 
 function getTimelineContentWidth(duration: number): number {
@@ -1554,6 +1907,7 @@ function selectKeyframeTimeRange(start: number, end: number): void {
 function setSelectedKeyframeTimes(times: number[]): void {
     const values = [...new Set(times.map((time) => Number(time.toFixed(4))))];
     selectedKeyframeTimes = values.sort((a, b) => a - b);
+    updateStatusChips();
 }
 
 function toggleSelectedKeyframeTime(time: number): void {
@@ -3659,6 +4013,8 @@ function syncDocumentState(): void {
     setText(modelNameEls, active.name);
     renderDocumentTabs();
     updateWindowTitle(active.name);
+    syncViewportEmpty();
+    updateStatusChips();
 }
 
 function refreshStats(): void {
@@ -5200,10 +5556,19 @@ function showToast(message: string, type: 'success' | 'error' | 'info' = 'info')
 
 function applyLayout(): void {
     layoutState.inspectorWidth = clampInspectorWidth(layoutState.inspectorWidth);
+    layoutState.leftSidebarWidth = clampLeftSidebarWidth(layoutState.leftSidebarWidth);
+
     root.style.setProperty('--inspector-width', `${layoutState.inspectorWidth}px`);
-    rightResizer.setAttribute('aria-valuemin', '280');
+    root.style.setProperty('--left-sidebar-width', `${layoutState.leftSidebarWidth}px`);
+
+    rightResizer.setAttribute('aria-valuemin', String(INSPECTOR_MIN_WIDTH));
     rightResizer.setAttribute('aria-valuemax', String(getMaxInspectorWidth()));
     rightResizer.setAttribute('aria-valuenow', String(layoutState.inspectorWidth));
+
+    leftResizer.setAttribute('aria-valuemin', String(LEFT_SIDEBAR_MIN_WIDTH));
+    leftResizer.setAttribute('aria-valuemax', String(getMaxLeftSidebarWidth()));
+    leftResizer.setAttribute('aria-valuenow', String(layoutState.leftSidebarWidth));
+
     applyInspectorState();
     applyContentMode();
 }
@@ -5269,8 +5634,12 @@ function loadLayout(): LayoutState {
             inspectorWidth: typeof source.inspectorWidth === 'number'
                 ? clampInspectorWidth(source.inspectorWidth)
                 : DEFAULT_LAYOUT.inspectorWidth,
+            leftSidebarWidth: typeof source.leftSidebarWidth === 'number'
+                ? clampLeftSidebarWidth(source.leftSidebarWidth)
+                : DEFAULT_LAYOUT.leftSidebarWidth,
             activeTab: isInspectorTab(source.activeTab) ? source.activeTab : DEFAULT_LAYOUT.activeTab,
             contentMode: isContentMode(source.contentMode) ? source.contentMode : DEFAULT_LAYOUT.contentMode,
+            theme: isThemeMode(source.theme) ? source.theme : DEFAULT_LAYOUT.theme,
             groups: {
                 ...DEFAULT_LAYOUT.groups,
                 ...(typeof source.groups === 'object' && source.groups ? source.groups : {}),
@@ -5282,11 +5651,19 @@ function loadLayout(): LayoutState {
 }
 
 function clampInspectorWidth(width: number): number {
-    return clamp(width, 280, getMaxInspectorWidth());
+    return clamp(width, INSPECTOR_MIN_WIDTH, getMaxInspectorWidth());
 }
 
 function getMaxInspectorWidth(): number {
-    return Math.max(280, Math.min(520, Math.floor(window.innerWidth * 0.42)));
+    return Math.max(INSPECTOR_MIN_WIDTH, Math.min(520, Math.floor(window.innerWidth * 0.42)));
+}
+
+function clampLeftSidebarWidth(width: number): number {
+    return clamp(width, LEFT_SIDEBAR_MIN_WIDTH, getMaxLeftSidebarWidth());
+}
+
+function getMaxLeftSidebarWidth(): number {
+    return Math.max(LEFT_SIDEBAR_MIN_WIDTH, Math.min(480, Math.floor(window.innerWidth * 0.38)));
 }
 
 function updateWindowTitle(name: string): void {
@@ -5335,6 +5712,10 @@ function isUvSelectionMode(value: unknown): value is UvSelectionMode {
 
 function isMaterialEditMode(value: unknown): value is MaterialEditMode {
     return value === 'original' || value === 'solid' || value === 'xray';
+}
+
+function isThemeMode(value: unknown): value is ThemeMode {
+    return value === 'light' || value === 'dark' || value === 'auto';
 }
 
 function isTextureSlotId(value: unknown): value is TextureSlotId {

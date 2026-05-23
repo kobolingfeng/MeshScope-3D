@@ -5,8 +5,8 @@
         "height": 920,
         "minWidth": 980,
         "minHeight": 640,
-        "frameless": true,
-        "backgroundColor": "#edf1f4",
+        "frameless": false,
+        "backgroundColor": "#eef2f6",
         "resizable": true,
         "alwaysOnTop": false
     },

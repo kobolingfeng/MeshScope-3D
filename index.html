@@ -8,41 +8,6 @@
 </head>
 <body>
     <div class="app-shell">
-        <header class="titlebar" id="titlebar">
-            <div class="titlebar-brand">
-                <div class="titlebar-emblem" aria-hidden="true">
-                    <div class="titlebar-emblem-core"></div>
-                    <div class="titlebar-emblem-ring"></div>
-                </div>
-                <div class="titlebar-copy">
-                    <strong class="titlebar-title">MeshScope 3D</strong>
-                    <span class="titlebar-subtitle" id="titlebar-scene-state">等待载入模型</span>
-                </div>
-            </div>
-
-            <button class="titlebar-tool" id="btn-reset-layout" type="button" title="重置右侧面板宽度" aria-label="重置右侧面板宽度">
-                <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
-                    <path d="M20 12a8 8 0 1 1-2.34-5.66"></path>
-                    <path d="M20 4v6h-6"></path>
-                </svg>
-            </button>
-
-            <div class="titlebar-controls">
-                <button class="titlebar-btn" id="tb-min" type="button" title="最小化" aria-label="最小化窗口">
-                    <svg viewBox="0 0 10 1" aria-hidden="true"><rect width="10" height="1"/></svg>
-                </button>
-                <button class="titlebar-btn" id="tb-max" type="button" title="最大化" aria-label="最大化或还原窗口">
-                    <svg viewBox="0 0 10 10" aria-hidden="true"><rect x="0.5" y="0.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1"/></svg>
-                </button>
-                <button class="titlebar-btn close" id="tb-close" type="button" title="关闭" aria-label="关闭窗口">
-                    <svg viewBox="0 0 10 10" aria-hidden="true">
-                        <line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" stroke-width="1.2"/>
-                        <line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" stroke-width="1.2"/>
-                    </svg>
-                </button>
-            </div>
-        </header>
-
         <section class="toolbar panel">
             <div class="toolbar-group">
                 <button class="btn primary" id="btn-open" type="button">
@@ -128,28 +93,115 @@
                 </div>
             </div>
 
+            <div class="toolbar-group toolbar-group-trailing">
+                <button class="btn icon-btn subtle" id="btn-theme-toggle" type="button" title="切换主题（亮 / 暗 / 跟随系统）" aria-label="切换主题">
+                    <svg class="icon-svg theme-icon-light" viewBox="0 0 24 24" aria-hidden="true">
+                        <circle cx="12" cy="12" r="4"></circle>
+                        <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.6 4.6l2.1 2.1M17.3 17.3l2.1 2.1M4.6 19.4l2.1-2.1M17.3 6.7l2.1-2.1"></path>
+                    </svg>
+                    <svg class="icon-svg theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"></path>
+                    </svg>
+                    <svg class="icon-svg theme-icon-auto" viewBox="0 0 24 24" aria-hidden="true">
+                        <circle cx="12" cy="12" r="8"></circle>
+                        <path d="M12 4v16"></path>
+                        <path d="M12 4a8 8 0 0 1 0 16Z" fill="currentColor" stroke="none"></path>
+                    </svg>
+                    <span>主题</span>
+                </button>
+                <button class="btn icon-btn subtle" id="btn-reset-layout" type="button" title="重置侧边栏宽度（双击 resizer 也可）" aria-label="重置侧边栏宽度">
+                    <svg class="icon-svg" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M20 12a8 8 0 1 1-2.34-5.66"></path>
+                        <path d="M20 4v6h-6"></path>
+                    </svg>
+                    <span>重置布局</span>
+                </button>
+            </div>
+
         </section>
 
         <section class="document-strip panel">
             <div class="document-strip-title">文档</div>
             <div class="document-tabs" id="document-tabs"></div>
             <div class="document-status">
+                <span class="status-chip" id="status-frame" hidden><span class="status-chip-label">帧</span><strong id="status-frame-value">—</strong></span>
+                <span class="status-chip" id="status-bone" hidden><span class="status-chip-label">骨骼</span><strong id="status-bone-value">—</strong></span>
+                <span class="status-chip" id="status-keys" hidden><span class="status-chip-label">选中关键帧</span><strong id="status-keys-value">0</strong></span>
                 <span id="toolbar-scene-state">等待载入模型</span>
                 <span id="toolbar-model-name">未加载</span>
-                <span><strong id="toolbar-fps">—</strong> FPS</span>
+                <span class="status-fps"><strong id="toolbar-fps">—</strong> FPS</span>
             </div>
         </section>
 
         <main class="main-layout">
+            <aside class="left-sidebar panel" id="left-sidebar" aria-label="动画列表">
+                <div class="panel-head">
+                    <div class="panel-title">
+                        <span>动画</span>
+                    </div>
+                    <span class="left-sidebar-meta" id="left-sidebar-meta">无动画</span>
+                </div>
+                <input
+                    class="anim-search-input text-input"
+                    id="anim-clip-search"
+                    type="search"
+                    placeholder="搜索动画"
+                    aria-label="搜索动画"
+                >
+                <div
+                    class="anim-clip-list left-sidebar-list"
+                    id="anim-clip-list"
+                    role="listbox"
+                    aria-label="动画列表"
+                ></div>
+            </aside>
+
+            <div
+                class="sidebar-resizer left"
+                id="left-resizer"
+                role="separator"
+                tabindex="0"
+                aria-orientation="vertical"
+                aria-label="调整左侧动画栏宽度"
+                aria-valuemin="220"
+                aria-valuemax="480"
+                aria-valuenow="260"
+            ></div>
+
             <div class="content-stack">
                 <section class="viewport panel content-page active" id="viewport" aria-label="3D 模型视图">
                     <canvas id="canvas" role="img" aria-label="3D 模型预览画布"></canvas>
 
-                    <div class="anim-bar" id="anim-bar" hidden>
-                        <div class="anim-clip-browser">
-                            <input class="anim-search-input" id="anim-clip-search" type="search" placeholder="搜索动画" aria-label="搜索动画">
-                            <div class="anim-clip-list" id="anim-clip-list" role="listbox" aria-label="动画列表"></div>
+                    <div class="viewport-empty" id="viewport-empty" hidden>
+                        <div class="viewport-empty-emblem" aria-hidden="true"></div>
+                        <strong>把模型拖到这里</strong>
+                        <span>支持 GLTF / GLB / OBJ / STL / PLY / FBX</span>
+                        <button class="btn primary" id="btn-empty-open" type="button">打开模型</button>
+                        <div class="viewport-empty-shortcuts">
+                            <kbd>K</kbd> 插入关键帧
+                            <kbd>,</kbd> <kbd>.</kbd> 上 / 下一帧
+                            <kbd>W</kbd> <kbd>E</kbd> 平移 / 旋转
+                            <kbd>Q</kbd> IK
+                            <kbd>Space</kbd> 播放
                         </div>
+                    </div>
+
+                    <div class="view-presets" id="view-presets" aria-label="预设视角">
+                        <button class="view-preset" type="button" data-preset="front" title="正视图 (1)">前</button>
+                        <button class="view-preset" type="button" data-preset="back" title="后视图 (Ctrl+1)">后</button>
+                        <button class="view-preset" type="button" data-preset="left" title="左视图 (3)">左</button>
+                        <button class="view-preset" type="button" data-preset="right" title="右视图 (Ctrl+3)">右</button>
+                        <button class="view-preset" type="button" data-preset="top" title="顶视图 (7)">顶</button>
+                        <button class="view-preset" type="button" data-preset="bottom" title="底视图 (Ctrl+7)">底</button>
+                        <button class="view-preset" type="button" data-preset="iso" title="等距视图 (0)">轴</button>
+                        <button class="view-preset view-preset-frame" type="button" data-preset="frame" title="聚焦模型 (F)">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <div class="anim-bar" id="anim-bar" hidden>
                         <div class="anim-main">
                             <div class="anim-transport">
                                 <button class="anim-btn anim-btn-play" id="anim-play" type="button" title="播放 / 暂停 (Space)" aria-label="播放或暂停动画">
@@ -260,7 +312,7 @@
             </div>
 
             <div
-                class="sidebar-resizer"
+                class="sidebar-resizer right"
                 id="right-resizer"
                 role="separator"
                 tabindex="0"
