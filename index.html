@@ -412,6 +412,16 @@
                                 <button id="btn-delete-keyframe" class="mini-btn" type="button">删除当前帧</button>
                             </div>
                             <div class="animation-keyframe-strip" id="anim-keyframe-strip" role="slider" aria-label="动画关键帧时间轴"></div>
+                            <div class="animation-history-panel">
+                                <div class="animation-history-header">
+                                    <strong>操作历史</strong>
+                                    <div class="animation-history-actions">
+                                        <button id="btn-anim-history-undo" class="mini-btn" type="button">撤回</button>
+                                        <button id="btn-anim-history-redo" class="mini-btn" type="button">重做</button>
+                                    </div>
+                                </div>
+                                <ol class="animation-history-list" id="anim-history-list" aria-label="操作历史"></ol>
+                            </div>
                             <label class="control-row control-row-select">
                                 <span class="control-label">名称</span>
                                 <input id="anim-clip-name" class="text-input" type="text" value="">

@@ -7,6 +7,7 @@ import {
     AxesHelper,
     Bone,
     BufferAttribute,
+    BufferGeometry,
     Box3,
     Clock,
     Color,
@@ -17,6 +18,8 @@ import {
     Group,
     GridHelper,
     HemisphereLight,
+    Line,
+    LineBasicMaterial,
     LoopOnce,
     LoopRepeat,
     Material,
@@ -153,6 +156,21 @@ export type AnimationClipSnapshot = {
     }>;
 };
 
+export type BonePoseSnapshot = {
+    selectedBoneIndex: number;
+    ikEnabled: boolean;
+    transformMode: BoneTransformMode;
+    ikTargetPosition: [number, number, number] | null;
+    bones: Array<{
+        index: number;
+        uuid: string;
+        name: string;
+        position: [number, number, number];
+        quaternion: [number, number, number, number];
+        scale: [number, number, number];
+    }>;
+};
+
 export type AnimationTrackVectorEdit = {
     x: number;
     y: number;
@@ -235,6 +253,7 @@ export class Viewer {
     onAnimationTick: (state: AnimationPlaybackState) => void = () => {};
     onAnimationsChanged: (state: AnimationPlaybackState) => void = () => {};
     onSkeletonChanged: (state: SkeletonEditorState) => void = () => {};
+    onBonePoseEditStarted: () => void = () => {};
     onBonePoseEdited: () => void = () => {};
 
     private animClock = new Clock();
@@ -255,19 +274,35 @@ export class Viewer {
     private bones: Bone[] = [];
     private selectedBone: Bone | null = null;
     private boneHandles = new Map<Bone, Mesh>();
+    private boneLines = new Map<Bone, Line>();
     private handleToBone = new WeakMap<Object3D, Bone>();
-    private boneHandleGeometry = new SphereGeometry(0.04, 16, 12);
+    private lineToBone = new WeakMap<Object3D, Bone>();
+    private boneHandleGeometry = new SphereGeometry(1, 16, 12);
     private boneHandleMaterial = new MeshBasicMaterial({
-        color: 0x2f6fb3,
+        color: 0x1f7ad1,
         depthTest: false,
         transparent: true,
-        opacity: 0.9,
+        opacity: 0.96,
     });
     private selectedBoneHandleMaterial = new MeshBasicMaterial({
-        color: 0xffb02e,
+        color: 0xff2a6d,
         depthTest: false,
         transparent: true,
         opacity: 1,
+    });
+    private boneLineMaterial = new LineBasicMaterial({
+        color: 0x1d72d2,
+        depthTest: false,
+        transparent: true,
+        opacity: 0.82,
+        linewidth: 2,
+    });
+    private selectedBoneLineMaterial = new LineBasicMaterial({
+        color: 0xffd43b,
+        depthTest: false,
+        transparent: true,
+        opacity: 1,
+        linewidth: 4,
     });
     private ikTargetMaterial = new MeshBasicMaterial({
         color: 0x2fb37a,
@@ -353,8 +388,12 @@ export class Viewer {
             const dragging = Boolean(event.value);
             this.transformDragging = dragging;
             this.controls.enabled = !dragging;
-            if (dragging) this.pauseAnimation();
-            else this.onBonePoseEdited();
+            if (dragging) {
+                this.pauseAnimation();
+                this.onBonePoseEditStarted();
+            } else {
+                this.onBonePoseEdited();
+            }
         });
         this.transformControls.addEventListener('objectChange', () => {
             if (this.ikEnabled) this.solveIk();
@@ -1058,6 +1097,8 @@ export class Viewer {
         this.boneHandleGeometry.dispose();
         this.boneHandleMaterial.dispose();
         this.selectedBoneHandleMaterial.dispose();
+        this.boneLineMaterial.dispose();
+        this.selectedBoneLineMaterial.dispose();
         this.ikTargetMaterial.dispose();
         this.transformControls.dispose();
         this.controls.dispose();
@@ -1126,6 +1167,7 @@ export class Viewer {
         this.skeletonVisible = visible;
         if (this.skeletonHelper) this.skeletonHelper.visible = visible;
         for (const handle of this.boneHandles.values()) handle.visible = visible;
+        for (const line of this.boneLines.values()) line.visible = visible;
         this.transformControls.visible = visible && Boolean(this.selectedBone || this.ikTarget);
         if (!visible) this.transformControls.detach();
         else this.attachTransformTarget();
@@ -1233,6 +1275,53 @@ export class Viewer {
 
         this.refreshAnimationClipMetas();
         this.refreshActiveAnimationAfterEdit(snapshot.clipIndex);
+    }
+
+    captureBonePoseSnapshot(): BonePoseSnapshot | null {
+        if (this.bones.length === 0) return null;
+
+        return {
+            selectedBoneIndex: this.selectedBone ? this.bones.indexOf(this.selectedBone) : -1,
+            ikEnabled: this.ikEnabled,
+            transformMode: this.boneTransformMode,
+            ikTargetPosition: this.ikTarget
+                ? [this.ikTarget.position.x, this.ikTarget.position.y, this.ikTarget.position.z]
+                : null,
+            bones: this.bones.map((bone, index) => ({
+                index,
+                uuid: bone.uuid,
+                name: bone.name,
+                position: [bone.position.x, bone.position.y, bone.position.z],
+                quaternion: [bone.quaternion.x, bone.quaternion.y, bone.quaternion.z, bone.quaternion.w],
+                scale: [bone.scale.x, bone.scale.y, bone.scale.z],
+            })),
+        };
+    }
+
+    restoreBonePoseSnapshot(snapshot: BonePoseSnapshot): void {
+        if (this.bones.length === 0) return;
+
+        for (const item of snapshot.bones) {
+            const bone = this.bones.find((candidate) => candidate.uuid === item.uuid)
+                ?? this.bones[item.index];
+            if (!bone) continue;
+            bone.position.fromArray(item.position);
+            bone.quaternion.fromArray(item.quaternion);
+            bone.scale.fromArray(item.scale);
+            bone.updateMatrixWorld(true);
+        }
+
+        this.selectedBone = this.bones[snapshot.selectedBoneIndex] ?? this.selectedBone ?? null;
+        this.boneTransformMode = snapshot.transformMode;
+        this.ikEnabled = snapshot.ikEnabled && Boolean(this.selectedBone);
+        this.refreshIkChain();
+        if (snapshot.ikTargetPosition && this.ikEnabled) {
+            this.ensureIkTarget();
+            this.ikTarget?.position.fromArray(snapshot.ikTargetPosition);
+        }
+        this.attachTransformTarget();
+        this.updateSkeletonOverlay();
+        this.onSkeletonChanged(this.getSkeletonEditorState());
     }
 
     renameActiveAnimationClip(name: string): void {
@@ -1466,9 +1555,11 @@ export class Viewer {
         this.skeletonHelper = new SkeletonHelper(object);
         this.skeletonHelper.visible = this.skeletonVisible;
         this.skeletonHelper.name = '__skeleton_editor_helper__';
-        (this.skeletonHelper.material as Material).depthTest = false;
-        (this.skeletonHelper.material as Material).transparent = true;
-        (this.skeletonHelper.material as Material).opacity = 0.88;
+        const skeletonMaterial = this.skeletonHelper.material as Material & { color?: Color };
+        skeletonMaterial.depthTest = false;
+        skeletonMaterial.transparent = true;
+        skeletonMaterial.opacity = 0.72;
+        skeletonMaterial.color?.set(0x255f99);
         this.scene.add(this.skeletonHelper);
 
         for (const bone of this.bones) {
@@ -1480,6 +1571,20 @@ export class Viewer {
             this.boneHandles.set(bone, handle);
             this.handleToBone.set(handle, bone);
             this.scene.add(handle);
+
+            if (bone.parent && (bone.parent as Bone).isBone) {
+                const line = new Line(
+                    new BufferGeometry().setFromPoints([new Vector3(), new Vector3()]),
+                    this.boneLineMaterial,
+                );
+                line.name = `__bone_line__${bone.name}`;
+                line.renderOrder = 18;
+                line.visible = this.skeletonVisible;
+                line.userData.__boneLine = true;
+                this.boneLines.set(bone, line);
+                this.lineToBone.set(line, bone);
+                this.scene.add(line);
+            }
         }
 
         this.selectedBone = this.bones[0] ?? null;
@@ -1499,7 +1604,12 @@ export class Viewer {
         for (const handle of this.boneHandles.values()) {
             this.scene.remove(handle);
         }
+        for (const line of this.boneLines.values()) {
+            this.scene.remove(line);
+            line.geometry.dispose();
+        }
         this.boneHandles.clear();
+        this.boneLines.clear();
         if (this.ikTargetMesh) this.scene.remove(this.ikTargetMesh);
         this.ikTarget = null;
         this.ikTargetMesh = null;
@@ -1513,17 +1623,32 @@ export class Viewer {
     private updateSkeletonOverlay(): void {
         if (this.bones.length === 0 || !this.skeletonVisible) return;
         const scale = this.getBoneHandleScale();
-        const temp = new Vector3();
+        const start = new Vector3();
+        const end = new Vector3();
         for (const bone of this.bones) {
             const handle = this.boneHandles.get(bone);
-            if (!handle) continue;
-            bone.getWorldPosition(temp);
-            handle.position.copy(temp);
-            handle.scale.setScalar(bone === this.selectedBone ? scale * 1.45 : scale);
-            handle.material = bone === this.selectedBone
-                ? this.selectedBoneHandleMaterial
-                : this.boneHandleMaterial;
-            handle.visible = true;
+            bone.getWorldPosition(end);
+            if (handle) {
+                handle.position.copy(end);
+                handle.scale.setScalar(bone === this.selectedBone ? scale * 2.25 : scale * 1.18);
+                handle.material = bone === this.selectedBone
+                    ? this.selectedBoneHandleMaterial
+                    : this.boneHandleMaterial;
+                handle.visible = true;
+            }
+
+            const line = this.boneLines.get(bone);
+            if (!line || !bone.parent) continue;
+            bone.parent.getWorldPosition(start);
+            const positions = line.geometry.getAttribute('position') as BufferAttribute;
+            positions.setXYZ(0, start.x, start.y, start.z);
+            positions.setXYZ(1, end.x, end.y, end.z);
+            positions.needsUpdate = true;
+            line.geometry.computeBoundingSphere();
+            line.material = bone === this.selectedBone || bone.parent === this.selectedBone
+                ? this.selectedBoneLineMaterial
+                : this.boneLineMaterial;
+            line.visible = true;
         }
         if (this.ikTarget && this.ikTargetMesh) {
             this.ikTargetMesh.position.copy(this.ikTarget.position);
@@ -1545,11 +1670,15 @@ export class Viewer {
         this.pointerNdc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
         this.pointerNdc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
         this.raycaster.setFromCamera(this.pointerNdc, this.camera);
-        const hits = this.raycaster.intersectObjects([...this.boneHandles.values()], false);
+        this.raycaster.params.Line.threshold = Math.max(this.getBoneHandleScale() * 1.8, 0.05);
+        const hits = this.raycaster.intersectObjects([
+            ...this.boneHandles.values(),
+            ...this.boneLines.values(),
+        ], false);
         const hit = hits[0]?.object;
         if (!hit) return;
 
-        const bone = this.handleToBone.get(hit);
+        const bone = this.handleToBone.get(hit) ?? this.lineToBone.get(hit);
         if (!bone) return;
         event.preventDefault();
         event.stopPropagation();

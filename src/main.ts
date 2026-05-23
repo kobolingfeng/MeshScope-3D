@@ -4,6 +4,7 @@ import {
     type AnimationEditorState,
     type AnimationPlaybackState,
     type AnimationTrackMeta,
+    type BonePoseSnapshot,
     type BoneTransformMode,
     type MaterialEditMode,
     type MaterialEditSnapshot,
@@ -85,6 +86,11 @@ type UndoEntry =
         kind: 'animation';
         label: string;
         snapshot: AnimationClipSnapshot;
+    }
+    | {
+        kind: 'bone-pose';
+        label: string;
+        snapshot: BonePoseSnapshot;
     };
 
 type DocumentSession = {
@@ -245,6 +251,9 @@ const animIkEnabledInput = $<HTMLInputElement>('anim-ik-enabled');
 const animKeyframeStrip = $('anim-keyframe-strip');
 const btnInsertKeyframe = $<HTMLButtonElement>('btn-insert-keyframe');
 const btnDeleteKeyframe = $<HTMLButtonElement>('btn-delete-keyframe');
+const btnAnimHistoryUndo = $<HTMLButtonElement>('btn-anim-history-undo');
+const btnAnimHistoryRedo = $<HTMLButtonElement>('btn-anim-history-redo');
+const animHistoryList = $('anim-history-list');
 const animClipNameInput = $<HTMLInputElement>('anim-clip-name');
 const animClipDuration = $('anim-clip-duration');
 const animTrackCount = $('anim-track-count');
@@ -345,6 +354,14 @@ const uvWheelUndoDraft: {
     timer: 0,
 };
 
+const animationPoseUndoDraft: {
+    snapshot: BonePoseSnapshot | null;
+    label: string;
+} = {
+    snapshot: null,
+    label: '',
+};
+
 const uvDragState: {
     mode: 'idle' | 'pan' | 'move-selection' | 'box-select' | 'scale-selection' | 'rotate-selection';
     pointerId: number | null;
@@ -416,7 +433,12 @@ viewer.onSkeletonChanged = () => {
     syncAnimationEditor();
 };
 
+viewer.onBonePoseEditStarted = () => {
+    beginBonePoseUndoTransaction();
+};
+
 viewer.onBonePoseEdited = () => {
+    commitBonePoseUndoTransaction();
     syncAnimationEditor();
 };
 
@@ -870,6 +892,14 @@ function setupAnimationControls(): void {
         showToast('已删除当前附近关键帧', 'success');
     });
 
+    btnAnimHistoryUndo.addEventListener('click', () => {
+        undoLastEdit();
+    });
+
+    btnAnimHistoryRedo.addEventListener('click', () => {
+        redoLastEdit();
+    });
+
     animKeyframeStrip.addEventListener('click', (event) => {
         const state = viewer.getAnimationState();
         if (!state.hasAnimations || state.duration <= 0) return;
@@ -1046,6 +1076,7 @@ function syncAnimationEditor(): void {
         animEditor.hidden = true;
         selectedAnimationTrackIndex = -1;
         animClipNameInput.value = '';
+        renderAnimationHistory();
         return;
     }
 
@@ -1056,6 +1087,7 @@ function syncAnimationEditor(): void {
     animClipDuration.textContent = state.duration > 0 ? `${state.duration.toFixed(2)}s` : '—';
     animTrackCount.textContent = String(state.tracks.length);
     renderAnimationTimeline(skeletonState, viewer.getAnimationState());
+    renderAnimationHistory();
 
     const previousValue = animTrackSelect.value;
     animTrackSelect.innerHTML = state.tracks.map((track) => {
@@ -1136,6 +1168,72 @@ function renderAnimationTimeline(
             return `<span class="animation-keyframe-marker${marker.selectedBone ? ' selected' : ''}" style="left:${left}%"></span>`;
         }).join('')
         : '';
+}
+
+function renderAnimationHistory(): void {
+    const active = getActiveDocument();
+    const pendingLabel = animationPoseUndoDraft.snapshot
+        ? (animationPoseUndoDraft.label || '骨骼姿态')
+        : '';
+    const undoItems = active ? active.undoStack.slice(-10).reverse() : [];
+    const redoItems = active ? active.redoStack.slice(-6) : [];
+    const rows: string[] = [];
+
+    if (pendingLabel) {
+        rows.push(renderHistoryItem({
+            kind: 'bone-pose',
+            label: pendingLabel,
+            state: '正在编辑',
+            className: 'pending',
+        }));
+    }
+
+    undoItems.forEach((entry, index) => {
+        rows.push(renderHistoryItem({
+            kind: entry.kind,
+            label: entry.label,
+            state: index === 0 ? '下一步撤回' : '可撤回',
+            className: index === 0 ? 'next' : '',
+        }));
+    });
+
+    redoItems.forEach((entry, index) => {
+        rows.push(renderHistoryItem({
+            kind: entry.kind,
+            label: entry.label,
+            state: index === 0 ? '下一步重做' : '可重做',
+            className: 'redo',
+        }));
+    });
+
+    animHistoryList.innerHTML = rows.length > 0
+        ? rows.join('')
+        : '<li class="animation-history-empty">暂无操作历史</li>';
+}
+
+function renderHistoryItem(item: {
+    kind: UndoEntry['kind'];
+    label: string;
+    state: string;
+    className: string;
+}): string {
+    const className = `animation-history-item${item.className ? ` ${item.className}` : ''}`;
+    return `
+        <li class="${className}">
+            <span class="animation-history-kind">${escapeHtml(getUndoKindLabel(item.kind))}</span>
+            <span class="animation-history-label">${escapeHtml(item.label)}</span>
+            <span class="animation-history-state">${escapeHtml(item.state)}</span>
+        </li>
+    `;
+}
+
+function getUndoKindLabel(kind: UndoEntry['kind']): string {
+    if (kind === 'animation') return '动画';
+    if (kind === 'bone-pose') return '姿态';
+    if (kind === 'material') return '材质';
+    if (kind === 'texture') return '贴图';
+    if (kind === 'uv' || kind === 'uv-selection') return 'UV';
+    return '编辑';
 }
 
 function syncAnimationTrackControls(
@@ -2180,6 +2278,8 @@ function resetUndoDrafts(): void {
     uvWheelUndoDraft.snapshot = null;
     uvWheelUndoDraft.selection = null;
     uvWheelUndoDraft.label = '';
+    animationPoseUndoDraft.snapshot = null;
+    animationPoseUndoDraft.label = '';
     refreshButtons();
 }
 
@@ -2229,6 +2329,7 @@ function flushPendingUndoTransactions(): void {
     commitMaterialUndoTransaction();
     commitTextureUndoTransaction();
     commitUvWheelUndoTransaction();
+    commitBonePoseUndoTransaction();
     refreshButtons();
 }
 
@@ -2315,6 +2416,44 @@ function runAnimationEdit(label: string, apply: () => void): void {
     }
     refreshAnimationBar(viewer.getAnimationState());
     syncAnimationEditor();
+}
+
+function beginBonePoseUndoTransaction(): void {
+    if (suppressUndoRecording || animationPoseUndoDraft.snapshot) return;
+    const snapshot = viewer.captureBonePoseSnapshot();
+    if (!snapshot) return;
+    animationPoseUndoDraft.snapshot = snapshot;
+    animationPoseUndoDraft.label = getBonePoseEditLabel();
+    refreshButtons();
+}
+
+function commitBonePoseUndoTransaction(): void {
+    if (!animationPoseUndoDraft.snapshot) return;
+    commitBonePoseUndo(animationPoseUndoDraft.snapshot, animationPoseUndoDraft.label || '骨骼姿态');
+    animationPoseUndoDraft.snapshot = null;
+    animationPoseUndoDraft.label = '';
+    refreshButtons();
+}
+
+function commitBonePoseUndo(snapshot: BonePoseSnapshot | null, label: string): void {
+    if (!snapshot) return;
+    const current = viewer.captureBonePoseSnapshot();
+    if (!current || areBonePoseSnapshotsEqual(snapshot, current)) return;
+    pushUndoEntry({
+        kind: 'bone-pose',
+        label,
+        snapshot,
+    });
+}
+
+function getBonePoseEditLabel(): string {
+    const state = viewer.getSkeletonEditorState();
+    const action = state.ikEnabled
+        ? 'IK 调整'
+        : state.transformMode === 'translate'
+            ? '骨骼移动'
+            : '骨骼旋转';
+    return state.selectedBoneName ? `${action} · ${state.selectedBoneName}` : action;
 }
 
 function pushUvUndoEntry(
@@ -2442,6 +2581,11 @@ function captureCurrentUndoEntry(template: UndoEntry): UndoEntry | null {
         return snapshot ? { kind: 'animation', label: template.label, snapshot } : null;
     }
 
+    if (template.kind === 'bone-pose') {
+        const snapshot = viewer.captureBonePoseSnapshot();
+        return snapshot ? { kind: 'bone-pose', label: template.label, snapshot } : null;
+    }
+
     const snapshot = snapshotCurrentUvPoints(template.snapshot);
     if (snapshot.length === 0) return null;
     return {
@@ -2477,6 +2621,12 @@ function applyUndoEntry(entry: UndoEntry): void {
     if (entry.kind === 'animation') {
         viewer.restoreAnimationSnapshot(entry.snapshot);
         refreshAnimationBar(viewer.getAnimationState());
+        syncAnimationEditor();
+        return;
+    }
+
+    if (entry.kind === 'bone-pose') {
+        viewer.restoreBonePoseSnapshot(entry.snapshot);
         syncAnimationEditor();
         return;
     }
@@ -2604,6 +2754,35 @@ function areAnimationSnapshotsEqual(a: AnimationClipSnapshot, b: AnimationClipSn
     }
 
     return true;
+}
+
+function areBonePoseSnapshotsEqual(a: BonePoseSnapshot, b: BonePoseSnapshot): boolean {
+    if (a.selectedBoneIndex !== b.selectedBoneIndex) return false;
+    if (a.ikEnabled !== b.ikEnabled) return false;
+    if (a.transformMode !== b.transformMode) return false;
+    if (!areNullableNumberTuplesNearlyEqual(a.ikTargetPosition, b.ikTargetPosition)) return false;
+    if (a.bones.length !== b.bones.length) return false;
+
+    for (let index = 0; index < a.bones.length; index += 1) {
+        const first = a.bones[index];
+        const second = b.bones[index];
+        if (!second) return false;
+        if (first.uuid !== second.uuid || first.index !== second.index) return false;
+        if (!areNumberArraysNearlyEqual(first.position, second.position)) return false;
+        if (!areNumberArraysNearlyEqual(first.quaternion, second.quaternion)) return false;
+        if (!areNumberArraysNearlyEqual(first.scale, second.scale)) return false;
+    }
+
+    return true;
+}
+
+function areNullableNumberTuplesNearlyEqual(
+    a: number[] | null,
+    b: number[] | null,
+): boolean {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    return areNumberArraysNearlyEqual(a, b);
 }
 
 function areTextureTransformsEqual(
@@ -3093,13 +3272,17 @@ function refreshButtons(): void {
     btnSaveAs.disabled = !active;
     btnUndo.disabled = !active || (active.undoStack.length === 0 && !hasPendingUndo);
     btnRedo.disabled = !active || hasPendingUndo || active.redoStack.length === 0;
+    btnAnimHistoryUndo.disabled = btnUndo.disabled;
+    btnAnimHistoryRedo.disabled = btnRedo.disabled;
+    renderAnimationHistory();
 }
 
 function hasPendingUndoTransaction(): boolean {
     return Boolean(
         materialUndoDraft.snapshot
         || textureUndoDraft.snapshot
-        || uvWheelUndoDraft.snapshot,
+        || uvWheelUndoDraft.snapshot
+        || animationPoseUndoDraft.snapshot,
     );
 }
 

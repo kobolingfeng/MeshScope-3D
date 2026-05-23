@@ -1016,6 +1016,100 @@ summary:focus-visible,
     z-index: 1;
 }
 
+.animation-history-panel {
+    display: grid;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid var(--line-base);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.66);
+}
+
+.animation-history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--text-0);
+    font-size: 12px;
+}
+
+.animation-history-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.animation-history-actions .mini-btn {
+    min-height: 26px;
+    padding: 0 8px;
+}
+
+.animation-history-list {
+    display: grid;
+    gap: 4px;
+    max-height: 150px;
+    margin: 0;
+    padding: 0;
+    overflow: auto;
+    list-style: none;
+}
+
+.animation-history-item {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 6px;
+    min-height: 28px;
+    padding: 4px 6px;
+    border: 1px solid rgba(121, 138, 158, 0.28);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.78);
+}
+
+.animation-history-item.next,
+.animation-history-item.pending {
+    border-color: rgba(47, 111, 179, 0.48);
+    background: rgba(47, 111, 179, 0.08);
+}
+
+.animation-history-item.redo {
+    opacity: 0.72;
+}
+
+.animation-history-kind {
+    min-width: 30px;
+    padding: 2px 5px;
+    border-radius: 5px;
+    background: rgba(47, 111, 179, 0.12);
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.animation-history-label {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-0);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.animation-history-state,
+.animation-history-empty {
+    color: var(--text-2);
+    font-size: 11px;
+}
+
+.animation-history-empty {
+    padding: 6px;
+    border: 1px dashed var(--line-base);
+    border-radius: 6px;
+    text-align: center;
+}
+
 .vector-input-row {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
