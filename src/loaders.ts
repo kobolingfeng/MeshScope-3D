@@ -70,18 +70,29 @@ export async function loadFromPath(path: string): Promise<Object3D> {
             return loadGLTF(textToArrayBuffer(text), assets);
         }
         case 'glb':
-            return loadGLTF(base64ToArrayBuffer(await fs.readBase64File(path)), new Map());
+            return loadGLTF(await readNativeBinaryFile(path), new Map());
         case 'obj': {
             const text = await fs.readTextFile(path);
             const assets = await collectObjAssets(path, text);
             return loadOBJ(text, assets);
         }
         case 'stl':
-            return loadSTL(base64ToArrayBuffer(await fs.readBase64File(path)), name);
+            return loadSTL(await readNativeBinaryFile(path), name);
         case 'ply':
-            return loadPLY(base64ToArrayBuffer(await fs.readBase64File(path)), name);
+            return loadPLY(await readNativeBinaryFile(path), name);
         case 'fbx':
-            return loadFBX(base64ToArrayBuffer(await fs.readBase64File(path)));
+            return loadFBX(await readNativeBinaryFile(path));
+    }
+}
+
+async function readNativeBinaryFile(path: string): Promise<ArrayBuffer> {
+    try {
+        const url = await fs.localFileUrl(path);
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return await response.arrayBuffer();
+    } catch {
+        return base64ToArrayBuffer(await fs.readBase64File(path));
     }
 }
 
@@ -250,8 +261,7 @@ async function collectGltfAssets(mainPath: string, text: string): Promise<Map<st
         const uri = asset.uri;
         const fullPath = resolveNativePath(directory, uri);
         try {
-            const base64 = await fs.readBase64File(fullPath);
-            assets.set(uri, new Blob([base64ToArrayBuffer(base64)]));
+            assets.set(uri, new Blob([await readNativeBinaryFile(fullPath)]));
         } catch (error) {
             if (asset.required) throw error;
             // Missing textures should not prevent geometry from loading.
@@ -282,8 +292,7 @@ async function collectObjAssets(mainPath: string, objText: string): Promise<Map<
         for (const textureRef of collectMtlTextureUris(rewrittenMaterialText)) {
             const texturePath = resolveNativePath(materialBaseDir, stripRelativePrefix(textureRef, normalizedMaterialDir));
             try {
-                const base64 = await fs.readBase64File(texturePath);
-                assets.set(textureRef, new Blob([base64ToArrayBuffer(base64)]));
+                assets.set(textureRef, new Blob([await readNativeBinaryFile(texturePath)]));
             } catch {
                 // Ignore missing textures so the OBJ can still load with partial materials.
             }

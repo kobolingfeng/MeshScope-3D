@@ -439,7 +439,7 @@ export class Viewer {
         }
 
         this.controls.update();
-        if (this.bones.length > 0) this.updateSkeletonOverlay();
+        if (this.bones.length > 0 && this.shouldUpdateSkeletonOverlay()) this.updateSkeletonOverlay();
         this.onRender();
         this.renderer.render(this.scene, this.camera);
 
@@ -1665,7 +1665,7 @@ export class Viewer {
     playAnimation(): void {
         if (this.animClips.length === 0) return;
         if (!this.activeAction) {
-            this.selectAnimationClip(0, { autoPlay: true });
+            this.selectAnimationClip(this.activeClipIndex >= 0 ? this.activeClipIndex : 0, { autoPlay: true });
             return;
         }
         if (this.animationFinished) {
@@ -1695,6 +1695,9 @@ export class Viewer {
     }
 
     seekAnimation(time: number): void {
+        if (!this.activeAction && this.animClips.length > 0) {
+            this.selectAnimationClip(this.activeClipIndex >= 0 ? this.activeClipIndex : 0, { autoPlay: false });
+        }
         if (!this.mixer || !this.activeAction) return;
         const clip = this.animClips[this.activeClipIndex];
         if (!clip) return;
@@ -1737,7 +1740,7 @@ export class Viewer {
         this.animClips = collected;
         this.refreshAnimationClipMetas();
         this.activeAction = null;
-        this.activeClipIndex = -1;
+        this.activeClipIndex = 0;
         this.animationPlaying = false;
         this.animationFinished = false;
         this.lastReportedTime = -1;
@@ -1750,7 +1753,6 @@ export class Viewer {
             this.onAnimationsChanged(this.getAnimationState());
         });
 
-        this.selectAnimationClip(0, { autoPlay: false });
         this.onAnimationsChanged(this.getAnimationState());
     }
 
@@ -1954,6 +1956,12 @@ export class Viewer {
             this.ikTargetMesh.scale.setScalar(scale * 1.8);
             this.ikTargetMesh.visible = this.ikEnabled && this.transformControlsVisible;
         }
+    }
+
+    private shouldUpdateSkeletonOverlay(): boolean {
+        return this.skeletonVisible
+            || (this.skeletonEditorActivated && this.transformControlsVisible && Boolean(this.selectedBone))
+            || Boolean(this.ikTargetMesh?.visible);
     }
 
     private getBoneHandleScale(): number {

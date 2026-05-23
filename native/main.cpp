@@ -322,6 +322,9 @@ static bool g_frameless    = false;
 static bool g_resizable    = true;
 static int  g_effectType   = 0; // 0=none, 2=mica, 3=acrylic, 4=micaAlt
 static std::unordered_map<std::string, bool> g_permissions; // cmd -> allowed
+static std::unordered_map<std::string, std::wstring> g_localFileTokens;
+static std::mutex g_localFileTokensMutex;
+static std::atomic<uint64_t> g_localFileSeq{0};
 
 // Tray
 #define WM_TRAYICON (WM_USER + 1)
@@ -395,6 +398,162 @@ static std::wstring app_data_dir() {
     }
     fspath::create_directories(g_appDataDir);
     return g_appDataDir;
+}
+
+static std::string make_local_file_token() {
+    const auto seq = ++g_localFileSeq;
+    return std::to_string(GetCurrentProcessId())
+        + "-" + std::to_string(GetTickCount64())
+        + "-" + std::to_string(seq);
+}
+
+static std::string decode_url_component(const std::string& value) {
+    std::string decoded;
+    decoded.reserve(value.size());
+    for (size_t i = 0; i < value.size(); ++i) {
+        if (value[i] == '%' && i + 2 < value.size()) {
+            auto hex = [](char ch) -> int {
+                if (ch >= '0' && ch <= '9') return ch - '0';
+                if (ch >= 'a' && ch <= 'f') return 10 + ch - 'a';
+                if (ch >= 'A' && ch <= 'F') return 10 + ch - 'A';
+                return -1;
+            };
+            const int hi = hex(value[i + 1]);
+            const int lo = hex(value[i + 2]);
+            if (hi >= 0 && lo >= 0) {
+                decoded.push_back(static_cast<char>((hi << 4) | lo));
+                i += 2;
+                continue;
+            }
+        }
+        decoded.push_back(value[i]);
+    }
+    return decoded;
+}
+
+static bool extract_local_file_token_from_path(const std::string& path, std::string& token) {
+    static constexpr const char* prefix = "__meshscope_file__/";
+    static constexpr size_t prefixLen = 19;
+    if (path.rfind(prefix, 0) != 0) return false;
+    token = path.substr(prefixLen);
+    const auto slash = token.find('/');
+    if (slash != std::string::npos) token = token.substr(0, slash);
+    token = decode_url_component(token);
+    return !token.empty();
+}
+
+static bool extract_local_file_token_from_uri(const std::wstring& uri, std::string& token) {
+    const std::string text = W2U(uri);
+    static constexpr const char* marker = "/__meshscope_file__/";
+    static constexpr size_t markerLen = 20;
+    const auto markerPos = text.find(marker);
+    if (markerPos == std::string::npos) return false;
+    const auto start = markerPos + markerLen;
+    auto end = text.find_first_of("/?#", start);
+    if (end == std::string::npos) end = text.size();
+    token = decode_url_component(text.substr(start, end - start));
+    return !token.empty();
+}
+
+static std::wstring local_file_mime_type(const std::wstring& path) {
+    auto ext = fspath::path(path).extension().wstring();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t ch) {
+        return static_cast<wchar_t>(std::towlower(ch));
+    });
+    if (ext == L".glb") return L"model/gltf-binary";
+    if (ext == L".gltf") return L"model/gltf+json";
+    if (ext == L".json") return L"application/json";
+    if (ext == L".png") return L"image/png";
+    if (ext == L".jpg" || ext == L".jpeg") return L"image/jpeg";
+    if (ext == L".webp") return L"image/webp";
+    if (ext == L".gif") return L"image/gif";
+    return L"application/octet-stream";
+}
+
+static HRESULT respond_text_resource(
+    ICoreWebView2WebResourceRequestedEventArgs* args,
+    int status,
+    const wchar_t* reason,
+    const char* body
+) {
+    const auto len = static_cast<UINT>(strlen(body));
+    ComPtr<IStream> stream;
+    stream.Attach(SHCreateMemStream(reinterpret_cast<const BYTE*>(body), len));
+    if (!stream) return S_OK;
+
+    ComPtr<ICoreWebView2WebResourceResponse> response;
+    g_env->CreateWebResourceResponse(
+        stream.Get(),
+        status,
+        reason,
+        L"Content-Type: text/plain; charset=utf-8\r\nAccess-Control-Allow-Origin: *",
+        &response);
+    args->put_Response(response.Get());
+    return S_OK;
+}
+
+static HRESULT respond_local_file_resource(
+    ICoreWebView2WebResourceRequestedEventArgs* args,
+    const std::string& token
+) {
+    std::wstring path;
+    {
+        std::lock_guard<std::mutex> lock(g_localFileTokensMutex);
+        auto it = g_localFileTokens.find(token);
+        if (it == g_localFileTokens.end()) {
+            return respond_text_resource(args, 404, L"Not Found", "Unknown file token");
+        }
+        path = it->second;
+    }
+
+    if (!fspath::exists(path) || !fspath::is_regular_file(path)) {
+        return respond_text_resource(args, 404, L"Not Found", "File not found");
+    }
+
+    ComPtr<IStream> stream;
+    const HRESULT hr = SHCreateStreamOnFileEx(
+        path.c_str(),
+        STGM_READ | STGM_SHARE_DENY_NONE,
+        FILE_ATTRIBUTE_NORMAL,
+        FALSE,
+        nullptr,
+        stream.GetAddressOf());
+    if (FAILED(hr) || !stream) {
+        return respond_text_resource(args, 500, L"Internal Server Error", "Cannot open file");
+    }
+
+    const std::wstring headers = L"Content-Type: " + local_file_mime_type(path)
+        + L"\r\nAccess-Control-Allow-Origin: *"
+        + L"\r\nCache-Control: no-store";
+
+    ComPtr<ICoreWebView2WebResourceResponse> response;
+    g_env->CreateWebResourceResponse(stream.Get(), 200, L"OK", headers.c_str(), &response);
+    args->put_Response(response.Get());
+    return S_OK;
+}
+
+static void register_local_file_resource_handler() {
+    if (!g_view) return;
+    g_view->AddWebResourceRequestedFilter(
+        L"http://app.localhost/__meshscope_file__/*",
+        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+    g_view->AddWebResourceRequestedFilter(
+        L"https://app.localhost/__meshscope_file__/*",
+        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+    g_view->add_WebResourceRequested(
+        Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+        [](ICoreWebView2*, ICoreWebView2WebResourceRequestedEventArgs* args) -> HRESULT {
+            ComPtr<ICoreWebView2WebResourceRequest> request;
+            args->get_Request(&request);
+            LPWSTR uri;
+            request->get_Uri(&uri);
+            std::wstring wUri(uri);
+            CoTaskMemFree(uri);
+
+            std::string token;
+            if (!extract_local_file_token_from_uri(wUri, token)) return S_OK;
+            return respond_local_file_resource(args, token);
+        }).Get(), nullptr);
 }
 
 // ================================================================
@@ -860,6 +1019,24 @@ static void reg_dialog() {
 // ================================================================
 
 static void reg_fs() {
+    ipc_on("fs.localFileUrl", [](const json& a) -> json {
+        auto path = U2W(a.value("path", std::string{}));
+        if (path.empty()) throw std::runtime_error("Missing path");
+        if (!fspath::exists(path) || !fspath::is_regular_file(path)) {
+            throw std::runtime_error("Cannot open: " + W2U(path));
+        }
+
+        const auto token = make_local_file_token();
+        {
+            std::lock_guard<std::mutex> lock(g_localFileTokensMutex);
+            g_localFileTokens[token] = fspath::absolute(path).wstring();
+        }
+
+        const auto protocol = a.value("protocol", std::string{"http:"}) == "https:"
+            ? std::string{"https"}
+            : std::string{"http"};
+        return protocol + "://app.localhost/__meshscope_file__/" + token;
+    });
     ipc_on("fs.readTextFile", [](const json& a) -> json {
         auto path = a.value("path", std::string{});
         std::ifstream f(U2W(path), std::ios::binary);
@@ -2286,6 +2463,11 @@ static void setupWebView(ICoreWebView2Controller* ctrl) {
         }).Get(), nullptr);
 
     // Navigate
+#ifdef SINGLE_EXE
+    if (dev || g_pakEntries.empty()) register_local_file_resource_handler();
+#else
+    register_local_file_resource_handler();
+#endif
     if (dev) {
         g_view->Navigate(g_devUrl.c_str());
     } else {
@@ -2331,6 +2513,10 @@ static void setupWebView(ICoreWebView2Controller* ctrl) {
                     auto hpos = path.find('#');
                     if (hpos != std::string::npos) path = path.substr(0, hpos);
                     path = percent_decode_path(path);
+                    std::string localToken;
+                    if (extract_local_file_token_from_path(path, localToken)) {
+                        return respond_local_file_resource(args, localToken);
+                    }
                     if (path.empty()) path = "index.html";
                     if (!is_safe_pak_path(path)) return respondText(404, L"Not Found", "Not Found");
 

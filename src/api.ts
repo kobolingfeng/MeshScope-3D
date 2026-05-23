@@ -26,6 +26,10 @@ export const dialog = {
 
 export const fs = {
     readTextFile:   (path: string) => invoke<string>('fs.readTextFile', { path }),
+    localFileUrl:   (path: string) => invoke<string>('fs.localFileUrl', {
+        path,
+        protocol: typeof window !== 'undefined' ? window.location.protocol : 'http:',
+    }),
     readBase64File: (path: string) => invoke<string>('fs.readBase64File', { path }),
     writeTextFile:  (path: string, content: string) => invoke<boolean>('fs.writeTextFile', { path, content }),
     writeBase64File: (path: string, content: string) =>
