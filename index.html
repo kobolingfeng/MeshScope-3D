@@ -148,6 +148,17 @@
                     placeholder="搜索动画"
                     aria-label="搜索动画"
                 >
+                <div class="anim-clip-tools" aria-label="动画操作">
+                    <button id="btn-new-tpose-clip" class="anim-clip-tool-btn" type="button" title="从默认 T-Pose 创建新动画">
+                        新建
+                    </button>
+                    <button id="btn-copy-clip-keys" class="anim-clip-tool-btn" type="button" title="复制当前动画关键帧">
+                        复制
+                    </button>
+                    <button id="btn-paste-clip-keys" class="anim-clip-tool-btn" type="button" title="粘贴到当前动画">
+                        粘贴
+                    </button>
+                </div>
                 <div
                     class="anim-clip-list left-sidebar-list"
                     id="anim-clip-list"
@@ -171,20 +182,6 @@
             <div class="content-stack">
                 <section class="viewport panel content-page active" id="viewport" aria-label="3D 模型视图">
                     <canvas id="canvas" role="img" aria-label="3D 模型预览画布"></canvas>
-
-                    <div class="viewport-empty" id="viewport-empty" hidden>
-                        <div class="viewport-empty-emblem" aria-hidden="true"></div>
-                        <strong>把模型拖到这里</strong>
-                        <span>支持 GLTF / GLB / OBJ / STL / PLY / FBX</span>
-                        <button class="btn primary" id="btn-empty-open" type="button">打开模型</button>
-                        <div class="viewport-empty-shortcuts">
-                            <kbd>K</kbd> 插入关键帧
-                            <kbd>,</kbd> <kbd>.</kbd> 上 / 下一帧
-                            <kbd>W</kbd> <kbd>E</kbd> 平移 / 旋转
-                            <kbd>Q</kbd> IK
-                            <kbd>Space</kbd> 播放
-                        </div>
-                    </div>
 
                     <div class="view-presets" id="view-presets" aria-label="预设视角">
                         <button class="view-preset" type="button" data-preset="front" title="正视图 (1)">前</button>
@@ -470,6 +467,10 @@
                             <label class="switch-row">
                                 <span class="control-label">显示骨架</span>
                                 <input id="anim-show-skeleton" type="checkbox" checked>
+                            </label>
+                            <label class="switch-row">
+                                <span class="control-label">显示操作轴</span>
+                                <input id="anim-show-transform" type="checkbox" checked>
                             </label>
                             <label class="control-row control-row-select">
                                 <span class="control-label">搜索骨骼</span>

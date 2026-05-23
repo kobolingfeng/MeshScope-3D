@@ -1012,8 +1012,9 @@ summary:focus-visible,
 }
 
 .animation-bone-item.active {
-    border-color: rgba(255, 42, 109, 0.56);
-    background: rgba(255, 42, 109, 0.10);
+    border-color: rgba(255, 42, 109, 0.78);
+    background: rgba(255, 42, 109, 0.14);
+    box-shadow: inset 3px 0 0 #ff2a6d;
 }
 
 .animation-bone-name {
@@ -1562,96 +1563,6 @@ input[type="checkbox"] {
     height: 14px;
 }
 
-.viewport-empty {
-    position: absolute;
-    inset: 0;
-    z-index: 2;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    pointer-events: none;
-    color: var(--text-1);
-    text-align: center;
-}
-
-.viewport-empty[hidden] {
-    display: none !important;
-}
-
-.viewport-empty > * {
-    pointer-events: auto;
-}
-
-.viewport-empty strong {
-    color: var(--text-0);
-    font-size: 18px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-}
-
-.viewport-empty > span {
-    color: var(--text-2);
-    font-size: 12px;
-}
-
-.viewport-empty-emblem {
-    width: 80px;
-    height: 80px;
-    border-radius: 22px;
-    background:
-        radial-gradient(circle at 30% 30%, var(--accent-soft), transparent 60%),
-        linear-gradient(135deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.04));
-    border: 1.5px dashed var(--line-strong);
-    position: relative;
-    margin-bottom: 4px;
-}
-
-.viewport-empty-emblem::before,
-.viewport-empty-emblem::after {
-    content: "";
-    position: absolute;
-    border-radius: 999px;
-    border: 1px solid var(--accent);
-    opacity: 0.5;
-}
-
-.viewport-empty-emblem::before {
-    inset: 18px;
-}
-
-.viewport-empty-emblem::after {
-    inset: 30px;
-    border-style: dashed;
-    opacity: 0.7;
-}
-
-.viewport-empty-shortcuts {
-    margin-top: 6px;
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 8px;
-    color: var(--text-2);
-    font-size: 11.5px;
-}
-
-.viewport-empty-shortcuts kbd {
-    min-width: 22px;
-    padding: 1px 6px;
-    border: 1px solid var(--line-base);
-    border-bottom-width: 2px;
-    border-radius: 6px;
-    background: var(--bg-panel-strong);
-    color: var(--text-0);
-    font: inherit;
-    font-weight: 600;
-    font-size: 11px;
-    text-align: center;
-    margin-right: 4px;
-}
-
 .status-chip {
     display: inline-flex;
     align-items: center;
@@ -1962,6 +1873,36 @@ input[type="checkbox"] {
     outline: none;
     border-color: var(--line-accent);
     box-shadow: 0 0 0 3px rgba(47, 111, 179, 0.14);
+}
+
+.anim-clip-tools {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+}
+
+.anim-clip-tool-btn {
+    min-width: 0;
+    min-height: 28px;
+    padding: 0 8px;
+    border: 1px solid var(--line-base);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.80);
+    color: var(--text-1);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.anim-clip-tool-btn:hover:not(:disabled) {
+    border-color: var(--line-accent);
+    color: var(--accent);
+    background: rgba(47, 111, 179, 0.08);
+}
+
+.anim-clip-tool-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.42;
 }
 
 .anim-clip-list {

@@ -194,6 +194,7 @@ export type AnimationTimelineMarker = {
 export type SkeletonEditorState = {
     hasSkeleton: boolean;
     skeletonVisible: boolean;
+    transformControlsVisible: boolean;
     bones: SkeletonBoneMeta[];
     selectedBoneIndex: number;
     selectedBoneName: string;
@@ -270,6 +271,8 @@ export class Viewer {
     private lastReportedTime = -1;
 
     private skeletonVisible = false;
+    private transformControlsVisible = true;
+    private skeletonEditorActivated = false;
     private skeletonHelper: SkeletonHelper | null = null;
     private bones: Bone[] = [];
     private selectedBone: Bone | null = null;
@@ -279,30 +282,32 @@ export class Viewer {
     private lineToBone = new WeakMap<Object3D, Bone>();
     private boneHandleGeometry = new SphereGeometry(1, 16, 12);
     private boneHandleMaterial = new MeshBasicMaterial({
-        color: 0x1f7ad1,
+        color: 0x000000,
         depthTest: false,
         transparent: true,
-        opacity: 0.96,
+        opacity: 0,
+        depthWrite: false,
     });
     private selectedBoneHandleMaterial = new MeshBasicMaterial({
+        color: 0x000000,
+        depthTest: false,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+    });
+    private boneLineMaterial = new LineBasicMaterial({
+        color: 0x1378d1,
+        depthTest: false,
+        transparent: true,
+        opacity: 0.95,
+        linewidth: 3,
+    });
+    private selectedBoneLineMaterial = new LineBasicMaterial({
         color: 0xff2a6d,
         depthTest: false,
         transparent: true,
         opacity: 1,
-    });
-    private boneLineMaterial = new LineBasicMaterial({
-        color: 0x1d72d2,
-        depthTest: false,
-        transparent: true,
-        opacity: 0.82,
-        linewidth: 2,
-    });
-    private selectedBoneLineMaterial = new LineBasicMaterial({
-        color: 0xffd43b,
-        depthTest: false,
-        transparent: true,
-        opacity: 1,
-        linewidth: 4,
+        linewidth: 6,
     });
     private ikTargetMaterial = new MeshBasicMaterial({
         color: 0x2fb37a,
@@ -434,7 +439,7 @@ export class Viewer {
         }
 
         this.controls.update();
-        if (this.skeletonVisible) this.updateSkeletonOverlay();
+        if (this.bones.length > 0) this.updateSkeletonOverlay();
         this.onRender();
         this.renderer.render(this.scene, this.camera);
 
@@ -1149,6 +1154,7 @@ export class Viewer {
         return {
             hasSkeleton: this.bones.length > 0,
             skeletonVisible: this.skeletonVisible,
+            transformControlsVisible: this.transformControlsVisible,
             bones: this.bones.map((bone, index) => ({
                 index,
                 name: getBoneDisplayName(bone, index),
@@ -1167,19 +1173,26 @@ export class Viewer {
 
     setSkeletonVisible(visible: boolean): void {
         this.skeletonVisible = visible;
-        if (this.skeletonHelper) this.skeletonHelper.visible = visible;
+        if (visible) this.skeletonEditorActivated = true;
+        if (this.skeletonHelper) this.skeletonHelper.visible = false;
         for (const handle of this.boneHandles.values()) handle.visible = visible;
         for (const line of this.boneLines.values()) line.visible = visible;
-        this.transformControls.visible = visible && Boolean(this.selectedBone || this.ikTarget);
-        if (!visible) this.transformControls.detach();
-        else this.attachTransformTarget();
+        this.attachTransformTarget();
+        this.updateSkeletonOverlay();
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+    }
+
+    setTransformControlsVisible(visible: boolean): void {
+        this.transformControlsVisible = visible;
+        if (visible) this.skeletonEditorActivated = true;
+        this.attachTransformTarget();
+        this.updateSkeletonOverlay();
         this.onSkeletonChanged(this.getSkeletonEditorState());
     }
 
     selectBone(index: number): void {
         const bone = this.bones[index] ?? null;
         this.selectedBone = bone;
-        if (bone && this.skeletonVisible === false) this.setSkeletonVisible(true);
         this.refreshIkChain();
         this.attachTransformTarget();
         this.updateSkeletonOverlay();
@@ -1279,16 +1292,20 @@ export class Viewer {
         }
     }
 
-    getAnimationClipsForExport(): AnimationClip[] {
+    getAnimationClipsForExport(options: { scope?: 'all' | 'current' } = {}): AnimationClip[] {
+        if (options.scope === 'current') {
+            const clip = this.animClips[this.activeClipIndex];
+            return clip ? [clip] : [];
+        }
         return [...this.animClips];
     }
 
-    captureAnimationSnapshot(): AnimationClipSnapshot | null {
-        const clip = this.animClips[this.activeClipIndex];
+    captureAnimationSnapshot(index = this.activeClipIndex): AnimationClipSnapshot | null {
+        const clip = this.animClips[index];
         if (!clip) return null;
 
         return {
-            clipIndex: this.activeClipIndex,
+            clipIndex: index,
             clipName: clip.name,
             duration: clip.duration,
             tracks: clip.tracks.map((track, index) => ({
@@ -1314,6 +1331,64 @@ export class Viewer {
 
         this.refreshAnimationClipMetas();
         this.refreshActiveAnimationAfterEdit(snapshot.clipIndex);
+    }
+
+    createRestPoseAnimationClip(name = 'T-Pose Action'): number {
+        const root = this.getActiveRoot();
+        if (!root || this.bones.length === 0) return -1;
+
+        const previousPose = this.captureBonePoseSnapshot();
+        if (this.activeAction) this.activeAction.paused = true;
+        this.animationPlaying = false;
+        let newIndex = -1;
+
+        try {
+            this.applyBindPose(root);
+            root.updateMatrixWorld(true);
+
+            const tracks: KeyframeTrack[] = [];
+            const times = [0, 1];
+            for (const bone of this.bones) {
+                const position = [bone.position.x, bone.position.y, bone.position.z];
+                const quaternion = [bone.quaternion.x, bone.quaternion.y, bone.quaternion.z, bone.quaternion.w];
+                const scale = [bone.scale.x, bone.scale.y, bone.scale.z];
+                tracks.push(new VectorKeyframeTrack(getBoneTrackName(bone, 'position'), times, [...position, ...position]));
+                tracks.push(new QuaternionKeyframeTrack(getBoneTrackName(bone, 'quaternion'), times, [...quaternion, ...quaternion]));
+                tracks.push(new VectorKeyframeTrack(getBoneTrackName(bone, 'scale'), times, [...scale, ...scale]));
+            }
+
+            const clip = new AnimationClip(this.uniqueAnimationClipName(name), 1, tracks);
+            this.animClips.push(clip);
+            this.bindAnimationClipsToRoot(root);
+            this.ensureAnimationMixer(root);
+            newIndex = this.animClips.length - 1;
+        } finally {
+            if (previousPose) this.restoreBonePoseSnapshot(previousPose);
+        }
+
+        if (newIndex < 0) return -1;
+        this.refreshAnimationClipMetas();
+        this.selectAnimationClip(newIndex, { autoPlay: false });
+        this.onAnimationsChanged(this.getAnimationState());
+        return newIndex;
+    }
+
+    replaceActiveAnimationTracksFromSnapshot(snapshot: AnimationClipSnapshot): boolean {
+        const clip = this.ensureActiveAnimationClip();
+        if (!clip) return false;
+
+        const activeIndex = this.activeClipIndex >= 0 ? this.activeClipIndex : this.animClips.indexOf(clip);
+        clip.duration = Math.max(0.001, snapshot.duration);
+        clip.tracks = snapshot.tracks.map((trackSnapshot) => createTrackFromSnapshot(
+            trackSnapshot.name,
+            trackSnapshot.times,
+            trackSnapshot.values,
+        ));
+
+        this.refreshAnimationClipMetas();
+        this.refreshActiveAnimationAfterEdit(activeIndex);
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+        return true;
     }
 
     captureBonePoseSnapshot(): BonePoseSnapshot | null {
@@ -1713,6 +1788,47 @@ export class Viewer {
         this.onAnimationsChanged(this.getAnimationState());
     }
 
+    private ensureAnimationMixer(root: Object3D): void {
+        if (this.mixer) {
+            if (!this.mixerRoot) this.mixerRoot = root;
+            return;
+        }
+
+        this.mixer = new AnimationMixer(root);
+        this.mixerRoot = root;
+        this.animClock.start();
+        this.mixer.addEventListener('finished', () => {
+            if (this.animationLoop) return;
+            this.animationFinished = true;
+            this.animationPlaying = false;
+            this.onAnimationsChanged(this.getAnimationState());
+        });
+    }
+
+    private bindAnimationClipsToRoot(root: Object3D): void {
+        root.userData = root.userData ?? {};
+        root.userData.animations = this.animClips;
+    }
+
+    private applyBindPose(root: Object3D): void {
+        root.traverse((node) => {
+            const skinned = node as Object3D & { isSkinnedMesh?: boolean; pose?: () => void };
+            if (skinned.isSkinnedMesh && typeof skinned.pose === 'function') {
+                skinned.pose();
+            }
+        });
+    }
+
+    private uniqueAnimationClipName(name: string): string {
+        const base = name.trim() || 'Pose Action';
+        const used = new Set(this.animClips.map((clip) => clip.name));
+        if (!used.has(base)) return base;
+
+        let suffix = 2;
+        while (used.has(`${base} ${suffix}`)) suffix += 1;
+        return `${base} ${suffix}`;
+    }
+
     private ensureActiveAnimationClip(): AnimationClip | null {
         if (this.animClips[this.activeClipIndex]) return this.animClips[this.activeClipIndex];
         const root = this.getActiveRoot();
@@ -1720,12 +1836,8 @@ export class Viewer {
 
         const clip = new AnimationClip('Pose Action', 1, []);
         this.animClips.push(clip);
-        root.userData = root.userData ?? {};
-        root.userData.animations = this.animClips;
-        if (!this.mixer) {
-            this.mixer = new AnimationMixer(root);
-            this.mixerRoot = root;
-        }
+        this.bindAnimationClipsToRoot(root);
+        this.ensureAnimationMixer(root);
         this.refreshAnimationClipMetas();
         this.selectAnimationClip(this.animClips.length - 1, { autoPlay: false });
         return clip;
@@ -1740,7 +1852,7 @@ export class Viewer {
         }
 
         this.skeletonHelper = new SkeletonHelper(object);
-        this.skeletonHelper.visible = this.skeletonVisible;
+        this.skeletonHelper.visible = false;
         this.skeletonHelper.name = '__skeleton_editor_helper__';
         const skeletonMaterial = this.skeletonHelper.material as Material & { color?: Color };
         skeletonMaterial.depthTest = false;
@@ -1808,7 +1920,7 @@ export class Viewer {
     }
 
     private updateSkeletonOverlay(): void {
-        if (this.bones.length === 0 || !this.skeletonVisible) return;
+        if (this.bones.length === 0) return;
         const scale = this.getBoneHandleScale();
         const start = new Vector3();
         const end = new Vector3();
@@ -1821,7 +1933,7 @@ export class Viewer {
                 handle.material = bone === this.selectedBone
                     ? this.selectedBoneHandleMaterial
                     : this.boneHandleMaterial;
-                handle.visible = true;
+                handle.visible = this.skeletonVisible;
             }
 
             const line = this.boneLines.get(bone);
@@ -1832,15 +1944,15 @@ export class Viewer {
             positions.setXYZ(1, end.x, end.y, end.z);
             positions.needsUpdate = true;
             line.geometry.computeBoundingSphere();
-            line.material = bone === this.selectedBone || bone.parent === this.selectedBone
+            line.material = bone === this.selectedBone
                 ? this.selectedBoneLineMaterial
                 : this.boneLineMaterial;
-            line.visible = true;
+            line.visible = this.skeletonVisible;
         }
         if (this.ikTarget && this.ikTargetMesh) {
             this.ikTargetMesh.position.copy(this.ikTarget.position);
             this.ikTargetMesh.scale.setScalar(scale * 1.8);
-            this.ikTargetMesh.visible = this.ikEnabled;
+            this.ikTargetMesh.visible = this.ikEnabled && this.transformControlsVisible;
         }
     }
 
@@ -1873,8 +1985,12 @@ export class Viewer {
     }
 
     private attachTransformTarget(): void {
-        if (!this.skeletonVisible) return;
         this.transformControls.detach();
+        if (!this.skeletonEditorActivated || !this.transformControlsVisible) {
+            this.transformControls.visible = false;
+            if (this.ikTargetMesh) this.ikTargetMesh.visible = false;
+            return;
+        }
 
         if (this.ikEnabled && this.selectedBone) {
             this.ensureIkTarget();
@@ -1886,6 +2002,7 @@ export class Viewer {
         }
 
         this.transformControls.visible = Boolean(this.selectedBone || this.ikTarget);
+        if (this.ikTargetMesh) this.ikTargetMesh.visible = this.ikEnabled && this.transformControlsVisible;
     }
 
     private ensureIkTarget(): void {
@@ -1902,7 +2019,7 @@ export class Viewer {
         }
         this.selectedBone.getWorldPosition(this.ikTarget.position);
         this.ikTargetMesh.position.copy(this.ikTarget.position);
-        this.ikTargetMesh.visible = this.ikEnabled;
+        this.ikTargetMesh.visible = this.ikEnabled && this.transformControlsVisible;
     }
 
     private refreshIkChain(): void {

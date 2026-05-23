@@ -22,6 +22,12 @@ import { extractModelPathsFromUrls } from './launch';
 
 type InspectorTab = 'overview' | 'properties' | 'animation' | 'textures';
 type ContentMode = 'model' | 'uv';
+type AnimationExportScope = 'all' | 'current';
+type SaveDestination = 'overwrite' | 'save-as';
+type SaveChoice = {
+    destination: SaveDestination;
+    animationScope: AnimationExportScope;
+};
 type UvSelectionMode = 'vertex' | 'edge' | 'face';
 type UvEdgeState = {
     id: string;
@@ -153,8 +159,6 @@ const rightResizer = $('right-resizer');
 const leftResizer = $('left-resizer');
 const leftSidebar = $('left-sidebar');
 const leftSidebarMeta = $('left-sidebar-meta');
-const viewportEmpty = $('viewport-empty');
-const btnEmptyOpen = $<HTMLButtonElement>('btn-empty-open');
 const viewPresets = $('view-presets');
 const btnThemeToggle = $<HTMLButtonElement>('btn-theme-toggle');
 const statusFrame = $('status-frame');
@@ -253,6 +257,9 @@ const animBar = $('anim-bar');
 const animPlayBtn = $<HTMLButtonElement>('anim-play');
 const animStopBtn = $<HTMLButtonElement>('anim-stop');
 const animClipSearch = $<HTMLInputElement>('anim-clip-search');
+const btnNewTposeClip = $<HTMLButtonElement>('btn-new-tpose-clip');
+const btnCopyClipKeys = $<HTMLButtonElement>('btn-copy-clip-keys');
+const btnPasteClipKeys = $<HTMLButtonElement>('btn-paste-clip-keys');
 const animClipList = $('anim-clip-list');
 const animEditOpenBtn = $<HTMLButtonElement>('anim-edit-open');
 const animTimeRange = $<HTMLInputElement>('anim-time');
@@ -263,6 +270,7 @@ const animSummary = $('anim-summary');
 const animEditorEmpty = $('anim-editor-empty');
 const animEditor = $('anim-editor');
 const animShowSkeletonInput = $<HTMLInputElement>('anim-show-skeleton');
+const animShowTransformInput = $<HTMLInputElement>('anim-show-transform');
 const animBoneSearch = $<HTMLInputElement>('anim-bone-search');
 const animBoneList = $('anim-bone-list');
 const animSelectedBone = $('anim-selected-bone');
@@ -320,6 +328,8 @@ const modelNameEls = [toolbarModelName, modelName];
 let animTimeRangeSyncing = false;
 let selectedAnimationTrackIndex = -1;
 let selectedKeyframeTimes: number[] = [];
+let animationClipboard: AnimationClipSnapshot | null = null;
+let lastScrolledBoneIndex = -1;
 let timelineZoom = 1;
 let timelineSnapEnabled = true;
 let timelineFps = 30;
@@ -487,14 +497,22 @@ viewer.onRender = () => {
 };
 
 viewer.onAnimationsChanged = (state) => {
-    refreshAnimationBar(state);
-    syncAnimationEditor();
-    updateStatusChips();
+    try {
+        refreshAnimationBar(state);
+        syncAnimationEditor();
+        updateStatusChips();
+    } catch (error) {
+        console.warn('onAnimationsChanged failed', error);
+    }
 };
 
 viewer.onSkeletonChanged = () => {
-    syncAnimationEditor();
-    updateStatusChips();
+    try {
+        syncAnimationEditor();
+        updateStatusChips();
+    } catch (error) {
+        console.warn('onSkeletonChanged failed', error);
+    }
 };
 
 viewer.onBonePoseEditStarted = () => {
@@ -511,8 +529,26 @@ viewer.onAnimationTick = (state) => {
     updateTimelinePlayhead(state);
 };
 
-applyLayout();
-void bootstrap();
+function showErrorBanner(message: string): void {
+    let banner = document.getElementById('__error_banner__') as HTMLDivElement | null;
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = '__error_banner__';
+        banner.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#b74f5c;color:#fff;padding:8px 14px;font:12px/1.4 monospace;white-space:pre-wrap;box-shadow:0 4px 12px rgba(0,0,0,0.3);';
+        document.body.appendChild(banner);
+    }
+    banner.textContent = message;
+}
+
+window.addEventListener('error', (event) => {
+    const where = event.filename ? ` @ ${event.filename}:${event.lineno}:${event.colno}` : '';
+    showErrorBanner(`JS Error: ${event.message}${where}`);
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason instanceof Error ? `${event.reason.message}\n${event.reason.stack ?? ''}` : String(event.reason);
+    showErrorBanner(`Unhandled: ${reason}`);
+});
 
 async function bootstrap(): Promise<void> {
     if (!inNative) document.body.classList.add('browser');
@@ -792,11 +828,11 @@ function setupFileInput(): void {
     });
 
     btnSave.addEventListener('click', () => {
-        void saveActiveDocument({ saveAs: false });
+        void saveActiveDocumentWithChoice({ forceSaveAs: false });
     });
 
     btnSaveAs.addEventListener('click', () => {
-        void saveActiveDocument({ saveAs: true });
+        void saveActiveDocumentWithChoice({ forceSaveAs: true });
     });
 
     fileInput.addEventListener('change', async () => {
@@ -874,9 +910,6 @@ function setupViewPresets(): void {
         const preset = button.dataset.preset;
         if (!preset) return;
         applyViewPreset(preset);
-    });
-    btnEmptyOpen.addEventListener('click', () => {
-        fileInput.click();
     });
 }
 
@@ -1092,44 +1125,40 @@ function setupKeyboardShortcuts(): void {
     });
 }
 
-// ----- Empty state & status chips -------------------------------------------
-
-function syncViewportEmpty(): void {
-    const active = getActiveDocument();
-    const empty = Boolean(
-        active
-        && active.kind === 'sample'
-        && documents.length === 1
-        && !loadingMessage,
-    );
-    viewportEmpty.hidden = !empty;
-}
+// ----- Status chips ----------------------------------------------------------
 
 function updateStatusChips(): void {
-    const animState = viewer.getAnimationState();
-    const skel = viewer.getSkeletonEditorState();
-
-    if (animState.hasAnimations) {
-        statusFrame.hidden = false;
-        const currentFrame = Math.round(animState.time * timelineFps);
-        const totalFrame = Math.round(animState.duration * timelineFps);
-        statusFrameValue.textContent = `${currentFrame} / ${totalFrame}`;
-    } else {
-        statusFrame.hidden = true;
+    if (!statusFrame || !statusFrameValue || !statusBone || !statusBoneValue || !statusKeys || !statusKeysValue) {
+        return;
     }
+    try {
+        const animState = viewer.getAnimationState();
+        const skel = viewer.getSkeletonEditorState();
 
-    if (skel.hasSkeleton && skel.selectedBoneName) {
-        statusBone.hidden = false;
-        statusBoneValue.textContent = skel.selectedBoneName;
-    } else {
-        statusBone.hidden = true;
-    }
+        if (animState.hasAnimations) {
+            statusFrame.hidden = false;
+            const currentFrame = Math.round(animState.time * timelineFps);
+            const totalFrame = Math.round(animState.duration * timelineFps);
+            statusFrameValue.textContent = `${currentFrame} / ${totalFrame}`;
+        } else {
+            statusFrame.hidden = true;
+        }
 
-    if (selectedKeyframeTimes.length > 0) {
-        statusKeys.hidden = false;
-        statusKeysValue.textContent = String(selectedKeyframeTimes.length);
-    } else {
-        statusKeys.hidden = true;
+        if (skel.hasSkeleton && skel.selectedBoneName) {
+            statusBone.hidden = false;
+            statusBoneValue.textContent = skel.selectedBoneName;
+        } else {
+            statusBone.hidden = true;
+        }
+
+        if (selectedKeyframeTimes.length > 0) {
+            statusKeys.hidden = false;
+            statusKeysValue.textContent = String(selectedKeyframeTimes.length);
+        } else {
+            statusKeys.hidden = true;
+        }
+    } catch (error) {
+        console.warn('updateStatusChips failed', error);
     }
 }
 
@@ -1172,7 +1201,8 @@ function setupAnimationControls(): void {
             const item = action.closest<HTMLElement>('[data-clip-index]');
             const index = Number(item?.dataset.clipIndex);
             if (!Number.isFinite(index)) return;
-            if (action.dataset.action === 'duplicate') duplicateClipAt(index);
+            if (action.dataset.action === 'copy-keyframes') copyClipKeyframesAt(index);
+            else if (action.dataset.action === 'duplicate') duplicateClipAt(index);
             else if (action.dataset.action === 'delete') deleteClipAt(index);
             return;
         }
@@ -1186,12 +1216,28 @@ function setupAnimationControls(): void {
         viewer.selectAnimationClip(index, { autoPlay: wasPlaying });
     });
 
+    btnNewTposeClip.addEventListener('click', () => {
+        createRestPoseClip();
+    });
+
+    btnCopyClipKeys.addEventListener('click', () => {
+        copyClipKeyframesAt(viewer.getAnimationState().activeIndex);
+    });
+
+    btnPasteClipKeys.addEventListener('click', () => {
+        pasteClipKeyframesToActiveClip();
+    });
+
     animEditOpenBtn.addEventListener('click', () => {
         openAnimationInspector();
     });
 
     animShowSkeletonInput.addEventListener('change', () => {
         viewer.setSkeletonVisible(animShowSkeletonInput.checked);
+    });
+
+    animShowTransformInput.addEventListener('change', () => {
+        viewer.setTransformControlsVisible(animShowTransformInput.checked);
     });
 
     animBoneSearch.addEventListener('input', () => {
@@ -1379,6 +1425,7 @@ function refreshAnimationBar(state: AnimationPlaybackState): void {
         selectedKeyframeTimes = [];
         leftSidebar.classList.add('is-empty');
         leftSidebarMeta.textContent = '无动画';
+        syncAnimationClipTools(state);
         renderAnimationTimeline(viewer.getSkeletonEditorState(), state);
         return;
     }
@@ -1403,6 +1450,7 @@ function refreshAnimationBar(state: AnimationPlaybackState): void {
         ? `${state.activeIndex + 1} / ${state.clips.length}`
         : '';
 
+    syncAnimationClipTools(state);
     syncAnimationProgress(state);
     renderAnimationTimeline(viewer.getSkeletonEditorState(), state);
 }
@@ -1421,7 +1469,10 @@ function renderAnimationClipList(state: AnimationPlaybackState): void {
                     <span class="anim-clip-name">${escapeHtml(clip.name)}</span>
                     <span class="anim-clip-meta">${clip.duration.toFixed(2)}s · ${clip.tracks}</span>
                     <span class="anim-clip-actions" aria-hidden="true">
-                        <span class="anim-clip-action" role="button" tabindex="0" data-action="duplicate" title="复制动画">
+                        <span class="anim-clip-action" role="button" tabindex="0" data-action="copy-keyframes" title="复制关键帧">
+                            <svg viewBox="0 0 24 24"><path d="M9 4h6l1 2h3v14H5V6h3z"/><path d="M9 11h6M9 15h5"/></svg>
+                        </span>
+                        <span class="anim-clip-action" role="button" tabindex="0" data-action="duplicate" title="复制为新动画">
                             <svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
                         </span>
                         <span class="anim-clip-action danger" role="button" tabindex="0" data-action="delete" title="删除动画">
@@ -1432,6 +1483,71 @@ function renderAnimationClipList(state: AnimationPlaybackState): void {
             `;
         }).join('')
         : '<div class="anim-list-empty">没有匹配动画</div>';
+}
+
+function syncAnimationClipTools(state: AnimationPlaybackState): void {
+    const hasSkeleton = viewer.getSkeletonEditorState().hasSkeleton;
+    btnNewTposeClip.disabled = !hasSkeleton;
+    btnCopyClipKeys.disabled = !state.hasAnimations || state.activeIndex < 0;
+    btnPasteClipKeys.disabled = !animationClipboard;
+}
+
+function createRestPoseClip(): void {
+    const index = viewer.createRestPoseAnimationClip('T-Pose Action');
+    if (index < 0) {
+        showToast('当前模型没有可创建动画的骨骼', 'error');
+        return;
+    }
+
+    selectedKeyframeTimes = [];
+    markActiveDocumentDirty();
+    openAnimationInspector();
+    refreshAnimationBar(viewer.getAnimationState());
+    syncAnimationEditor();
+    showToast('已从默认 T-Pose 创建新动画', 'success');
+}
+
+function copyClipKeyframesAt(index: number): void {
+    if (!Number.isFinite(index) || index < 0) {
+        showToast('没有可复制的动画', 'error');
+        return;
+    }
+
+    const snapshot = viewer.captureAnimationSnapshot(index);
+    if (!snapshot) {
+        showToast('复制动画关键帧失败', 'error');
+        return;
+    }
+
+    animationClipboard = snapshot;
+    syncAnimationClipTools(viewer.getAnimationState());
+    showToast(`已复制 "${snapshot.clipName || `Clip ${index + 1}`}" 的关键帧`, 'success');
+}
+
+function pasteClipKeyframesToActiveClip(): void {
+    if (!animationClipboard) {
+        showToast('剪贴板里没有动画关键帧', 'error');
+        return;
+    }
+
+    const state = viewer.getAnimationState();
+    if (!state.hasAnimations || state.activeIndex < 0) {
+        const created = viewer.createRestPoseAnimationClip(`${animationClipboard.clipName || 'Pasted Action'} 编辑`);
+        if (created < 0) {
+            showToast('当前模型没有可粘贴动画的骨骼', 'error');
+            return;
+        }
+        markActiveDocumentDirty();
+    }
+
+    const clipName = animationClipboard.clipName || '动画';
+    runAnimationEdit('粘贴动画关键帧', () => {
+        if (!animationClipboard) return;
+        viewer.replaceActiveAnimationTracksFromSnapshot(animationClipboard);
+    });
+    selectedKeyframeTimes = [];
+    syncAnimationClipTools(viewer.getAnimationState());
+    showToast(`已粘贴 "${clipName}" 的关键帧`, 'success');
 }
 
 function duplicateClipAt(index: number): void {
@@ -1499,6 +1615,7 @@ function syncAnimationEditor(): void {
         selectedAnimationTrackIndex = -1;
         animClipNameInput.value = '';
         renderAnimationHistory();
+        syncAnimationClipTools(viewer.getAnimationState());
         return;
     }
 
@@ -1510,6 +1627,7 @@ function syncAnimationEditor(): void {
     animTrackCount.textContent = String(state.tracks.length);
     renderAnimationTimeline(skeletonState, viewer.getAnimationState());
     renderAnimationHistory();
+    syncAnimationClipTools(viewer.getAnimationState());
 
     const previousValue = animTrackSelect.value;
     animTrackSelect.innerHTML = state.tracks.map((track) => {
@@ -1544,6 +1662,8 @@ function syncAnimationEditor(): void {
 function renderSkeletonControls(state: SkeletonEditorState): void {
     animShowSkeletonInput.checked = state.skeletonVisible;
     animShowSkeletonInput.disabled = !state.hasSkeleton;
+    animShowTransformInput.checked = state.transformControlsVisible;
+    animShowTransformInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animBoneSearch.disabled = !state.hasSkeleton;
     animIkEnabledInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnInsertKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
@@ -1553,10 +1673,14 @@ function renderSkeletonControls(state: SkeletonEditorState): void {
     syncTransformModeButtons(state.transformMode);
 
     const query = normalizeSearchText(animBoneSearch.value);
-    const bones = state.bones.filter((bone) => {
+    let bones = state.bones.filter((bone) => {
         const text = normalizeSearchText(`${bone.name} ${bone.parentName}`);
         return text.includes(query);
     });
+    if (state.selectedBoneIndex >= 0 && !bones.some((bone) => bone.index === state.selectedBoneIndex)) {
+        animBoneSearch.value = '';
+        bones = state.bones;
+    }
     animBoneList.innerHTML = bones.length > 0
         ? bones.map((bone) => {
             const active = bone.selected ? ' active' : '';
@@ -1568,6 +1692,16 @@ function renderSkeletonControls(state: SkeletonEditorState): void {
             `;
         }).join('')
         : '<div class="animation-list-empty">没有匹配骨骼</div>';
+    scrollSelectedBoneIntoView(state.selectedBoneIndex);
+}
+
+function scrollSelectedBoneIntoView(index: number): void {
+    if (index < 0 || index === lastScrolledBoneIndex) return;
+    lastScrolledBoneIndex = index;
+    requestAnimationFrame(() => {
+        const selected = animBoneList.querySelector<HTMLElement>(`[data-bone-index="${index}"]`);
+        selected?.scrollIntoView({ block: 'center' });
+    });
 }
 
 function syncTransformModeButtons(mode: BoneTransformMode): void {
@@ -3628,6 +3762,7 @@ function activateDocument(id: string, options: { fit?: boolean } = {}): void {
     activeDocumentId = id;
     resetUndoDrafts();
     selectedKeyframeTimes = [];
+    lastScrolledBoneIndex = -1;
     currentUvEditorState = null;
     currentUvEdges = [];
     currentUvEdgeMap.clear();
@@ -3695,6 +3830,7 @@ function clearActiveDocument(): void {
 
     resetUndoDrafts();
     selectedKeyframeTimes = [];
+    lastScrolledBoneIndex = -1;
     currentUvEditorState = null;
     currentUvEdges = [];
     currentUvEdgeMap.clear();
@@ -3799,53 +3935,119 @@ function canSaveActiveDocument(): boolean {
     );
 }
 
-async function saveActiveDocument(options: { saveAs: boolean }): Promise<void> {
+async function saveActiveDocumentWithChoice(options: { forceSaveAs: boolean }): Promise<void> {
+    const active = getActiveDocument();
+    if (!active) return;
+
+    const choice = chooseSaveChoice(options.forceSaveAs);
+    if (!choice) return;
+    await saveActiveDocument(choice);
+}
+
+function chooseSaveChoice(forceSaveAs: boolean): SaveChoice | null {
+    const canOverwrite = !forceSaveAs && canSaveActiveDocument();
+    const animationState = viewer.getAnimationState();
+    const hasCurrentAnimation = animationState.hasAnimations && animationState.activeIndex >= 0;
+    const choices: Array<{ key: string; label: string; choice: SaveChoice }> = [];
+
+    if (canOverwrite) {
+        choices.push({
+            key: String(choices.length + 1),
+            label: '覆盖原文件（模型 + 全部动画）',
+            choice: { destination: 'overwrite', animationScope: 'all' },
+        });
+    }
+
+    if (hasCurrentAnimation) {
+        choices.push({
+            key: String(choices.length + 1),
+            label: '另存新 GLB（模型 + 当前动画）',
+            choice: { destination: 'save-as', animationScope: 'current' },
+        });
+    }
+
+    choices.push({
+        key: String(choices.length + 1),
+        label: '另存新文件（模型 + 全部动画）',
+        choice: { destination: 'save-as', animationScope: 'all' },
+    });
+
+    if (choices.length === 1) return choices[0].choice;
+
+    const answer = window.prompt(
+        `选择保存方式：\n${choices.map((item) => `${item.key}. ${item.label}`).join('\n')}\n\n输入编号确认。`,
+        choices[0].key,
+    );
+    if (answer === null) return null;
+
+    const selected = choices.find((item) => item.key === answer.trim());
+    if (!selected) {
+        showToast('保存已取消：没有匹配的编号', 'info');
+        return null;
+    }
+    return selected.choice;
+}
+
+async function saveActiveDocument(choice: SaveChoice): Promise<void> {
     const active = getActiveDocument();
     if (!active) return;
 
     finishActiveUvInteraction({ commit: true });
     flushPendingUndoTransactions();
 
-    const directPath = !options.saveAs && canSaveActiveDocument() ? active.sourcePath : undefined;
+    const directPath = choice.destination === 'overwrite' && canSaveActiveDocument() ? active.sourcePath : undefined;
     let targetPath = directPath;
-    let downloadName = defaultExportName(active.name);
+    let downloadName = defaultExportName(active.name, choice.animationScope);
 
     if (!targetPath) {
         if (inNative) {
-            const selection = await dialog.saveFile({
-                filters: [
+            const filters = choice.animationScope === 'current'
+                ? [{ name: 'glTF 二进制', extensions: ['glb'] }]
+                : [
                     { name: 'glTF 二进制', extensions: ['glb'] },
                     { name: 'glTF JSON', extensions: ['gltf'] },
-                ],
+                ];
+            const selection = await dialog.saveFile({
+                filters,
                 defaultName: downloadName,
             }).catch(() => null);
             if (!selection) return;
-            targetPath = ensureExportExtension(selection);
+            targetPath = ensureExportExtension(selection, choice.animationScope);
         } else {
             targetPath = downloadName;
         }
     }
 
-    const binary = extOf(targetPath) !== 'gltf';
-    showLoading(`正在保存 ${fileNameOfPath(targetPath)} …`);
+    const binary = choice.animationScope === 'current' || extOf(targetPath) !== 'gltf';
+    const actionLabel = choice.animationScope === 'current' ? '导出当前动画' : '保存';
+    showLoading(`正在${actionLabel} ${fileNameOfPath(targetPath)} …`);
 
     try {
-        const exported = await exportActiveDocument(active, { binary });
+        const exported = await exportActiveDocument(active, {
+            binary,
+            animationScope: choice.animationScope,
+        });
         if (inNative) {
             await writeExportToPath(targetPath, exported, binary);
-            active.sourcePath = targetPath;
-            active.name = fileNameOfPath(targetPath);
+            if (choice.animationScope === 'all') {
+                active.sourcePath = targetPath;
+                active.name = fileNameOfPath(targetPath);
+            }
         } else {
             downloadName = fileNameOfPath(targetPath);
             downloadExport(downloadName, exported, binary);
         }
 
-        active.kind = 'model';
-        active.dirty = false;
+        if (choice.animationScope === 'all') {
+            active.kind = 'model';
+            active.dirty = false;
+        }
         syncDocumentState();
         syncPropertyPanel();
         refreshButtons();
-        showToast(`已保存 ${active.name}`, 'success');
+        showToast(choice.animationScope === 'current'
+            ? `已导出当前动画 ${fileNameOfPath(targetPath)}`
+            : `已保存 ${active.name}`, 'success');
     } catch (error) {
         console.error(error);
         const message = error instanceof Error ? error.message : String(error);
@@ -3857,11 +4059,14 @@ async function saveActiveDocument(options: { saveAs: boolean }): Promise<void> {
 
 async function exportActiveDocument(
     document: DocumentSession,
-    options: { binary: boolean },
+    options: { binary: boolean; animationScope: AnimationExportScope },
 ): Promise<ArrayBuffer | Record<string, unknown>> {
     const { GLTFExporter } = await import('three/examples/jsm/exporters/GLTFExporter.js');
     const exporter = new GLTFExporter();
-    const animations = viewer.getAnimationClipsForExport();
+    const animations = viewer.getAnimationClipsForExport({ scope: options.animationScope });
+    if (options.animationScope === 'current' && animations.length === 0) {
+        throw new Error('当前没有可导出的动画');
+    }
 
     return withCleanExportUserData(document.root, () => new Promise<ArrayBuffer | Record<string, unknown>>((resolve, reject) => {
         (exporter as unknown as {
@@ -3950,17 +4155,33 @@ function isDirectSavePath(path: string): boolean {
     return ext === 'glb' || ext === 'gltf';
 }
 
-function ensureExportExtension(path: string): string {
+function ensureExportExtension(path: string, animationScope: AnimationExportScope = 'all'): string {
     const ext = extOf(path);
+    if (animationScope === 'current') {
+        if (ext === 'glb') return path;
+        if (ext === 'gltf') return `${path.slice(0, -5)}glb`;
+        return `${path}.glb`;
+    }
     if (ext === 'glb' || ext === 'gltf') return path;
     return `${path}.glb`;
 }
 
-function defaultExportName(name: string): string {
+function defaultExportName(name: string, animationScope: AnimationExportScope = 'all'): string {
     const trimmed = name.trim() || 'model';
     const dot = trimmed.lastIndexOf('.');
     const base = dot > 0 ? trimmed.slice(0, dot) : trimmed;
+    if (animationScope === 'current') {
+        const state = viewer.getAnimationState();
+        const activeClip = state.clips.find((clip) => clip.index === state.activeIndex);
+        const clipName = sanitizeFileNamePart(activeClip?.name || 'animation');
+        return `${sanitizeFileNamePart(base)}_${clipName}.glb`;
+    }
     return `${base}.glb`;
+}
+
+function sanitizeFileNamePart(value: string): string {
+    const cleaned = value.trim().replace(/[<>:"/\\|?*\u0000-\u001F]+/g, '_').replace(/\s+/g, '_');
+    return cleaned || 'model';
 }
 
 function openDocumentWithModel(name: string, rootModel: Object3D, sourcePath?: string): void {
@@ -4013,7 +4234,6 @@ function syncDocumentState(): void {
     setText(modelNameEls, active.name);
     renderDocumentTabs();
     updateWindowTitle(active.name);
-    syncViewportEmpty();
     updateStatusChips();
 }
 
@@ -4029,7 +4249,7 @@ function refreshButtons(): void {
     const active = getActiveDocument();
     const hasPendingUndo = hasPendingUndoTransaction();
     btnClear.disabled = false;
-    btnSave.disabled = !canSaveActiveDocument();
+    btnSave.disabled = !active;
     btnSaveAs.disabled = !active;
     btnUndo.disabled = !active || (active.undoStack.length === 0 && !hasPendingUndo);
     btnRedo.disabled = !active || hasPendingUndo || active.redoStack.length === 0;
@@ -5760,3 +5980,15 @@ function fileNameOfPath(path: string): string {
     const index = normalized.lastIndexOf('\\');
     return index >= 0 ? normalized.slice(index + 1) : normalized;
 }
+
+// Module bootstrap. Kept at file end so every `const`/`let` (especially
+// mediaPrefersDark referenced via applyTheme) is past its TDZ before
+// bootstrap runs synchronously.
+try {
+    applyLayout();
+} catch (error) {
+    showErrorBanner(`applyLayout: ${(error as Error)?.message ?? String(error)}`);
+}
+void bootstrap().catch((error) => {
+    showErrorBanner(`bootstrap: ${(error as Error)?.message ?? String(error)}\n${(error as Error)?.stack ?? ''}`);
+});
