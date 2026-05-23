@@ -334,6 +334,7 @@ let timelineZoom = 1;
 let timelineSnapEnabled = true;
 let timelineFps = 30;
 let timelineRetimePreviewDelta = 0;
+let statsRefreshRaf = 0;
 
 const timelineDragState: {
     active: boolean;
@@ -1049,9 +1050,42 @@ function setupKeyboardShortcuts(): void {
         if (!noMods) return;
 
         const state = viewer.getAnimationState();
+        const lowerKey = key.toLowerCase();
+
+        // Arrow Left / Right — selected timeline keyframe previous / next.
+        if (key === 'ArrowLeft' || key === 'ArrowRight') {
+            if (selectAdjacentTimelineKeyframe(key === 'ArrowRight' ? 1 : -1)) {
+                event.preventDefault();
+            }
+            return;
+        }
+
+        // Arrow Up / Down — selected bone previous / next.
+        if (key === 'ArrowUp' || key === 'ArrowDown') {
+            if (selectAdjacentBone(key === 'ArrowDown' ? 1 : -1)) {
+                event.preventDefault();
+            }
+            return;
+        }
+
+        // U/I/O and J/K/L — positive/negative X/Y/Z transform steps.
+        const axisStepKeys: Record<string, { axis: 'x' | 'y' | 'z'; direction: 1 | -1 }> = {
+            u: { axis: 'x', direction: 1 },
+            i: { axis: 'y', direction: 1 },
+            o: { axis: 'z', direction: 1 },
+            j: { axis: 'x', direction: -1 },
+            k: { axis: 'y', direction: -1 },
+            l: { axis: 'z', direction: -1 },
+        };
+        const axisStep = axisStepKeys[lowerKey];
+        if (axisStep && viewer.getSelectedBoneLocalTrs()) {
+            event.preventDefault();
+            stepSelectedBoneTransform(axisStep.axis, axisStep.direction);
+            return;
+        }
 
         // K — insert keyframe.
-        if (key.toLowerCase() === 'k') {
+        if (lowerKey === 'k') {
             if (viewer.getSelectedBoneLocalTrs()) {
                 event.preventDefault();
                 runAnimationEdit('插入关键帧', () => viewer.insertSelectedBoneKeyframe());
@@ -1061,19 +1095,19 @@ function setupKeyboardShortcuts(): void {
         }
 
         // W / E — transform gizmo mode.
-        if (key.toLowerCase() === 'w') {
+        if (lowerKey === 'w') {
             event.preventDefault();
             setBoneTransformMode('translate');
             return;
         }
-        if (key.toLowerCase() === 'e') {
+        if (lowerKey === 'e') {
             event.preventDefault();
             setBoneTransformMode('rotate');
             return;
         }
 
         // Q — toggle IK.
-        if (key.toLowerCase() === 'q') {
+        if (lowerKey === 'q') {
             event.preventDefault();
             animIkEnabledInput.checked = !animIkEnabledInput.checked;
             viewer.setIkEnabled(animIkEnabledInput.checked);
@@ -1104,7 +1138,7 @@ function setupKeyboardShortcuts(): void {
         }
 
         // F — frame model.
-        if (key.toLowerCase() === 'f') {
+        if (lowerKey === 'f') {
             event.preventDefault();
             applyViewPreset('frame');
             return;
@@ -1123,6 +1157,47 @@ function setupKeyboardShortcuts(): void {
             return;
         }
     });
+}
+
+function selectAdjacentTimelineKeyframe(direction: 1 | -1): boolean {
+    if (selectedKeyframeTimes.length === 0) return false;
+    const state = viewer.getAnimationState();
+    if (!state.hasAnimations || state.duration <= 0) return false;
+
+    const markers = [...new Set(viewer.getSkeletonEditorState().keyframes.map((marker) => Number(marker.time.toFixed(4))))]
+        .sort((a, b) => a - b);
+    if (markers.length === 0) return false;
+
+    const anchor = direction > 0
+        ? Math.max(...selectedKeyframeTimes)
+        : Math.min(...selectedKeyframeTimes);
+    const target = direction > 0
+        ? markers.find((time) => time > anchor + 1e-4)
+        : [...markers].reverse().find((time) => time < anchor - 1e-4);
+    if (target === undefined) return true;
+
+    setSelectedKeyframeTimes([target]);
+    viewer.seekAnimation(target);
+    renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+    return true;
+}
+
+function selectAdjacentBone(direction: 1 | -1): boolean {
+    const state = viewer.getSkeletonEditorState();
+    if (!state.hasSkeleton || state.selectedBoneIndex < 0) return false;
+
+    const nextIndex = clamp(state.selectedBoneIndex + direction, 0, state.bones.length - 1);
+    if (nextIndex === state.selectedBoneIndex) return true;
+    viewer.selectBone(nextIndex);
+    return true;
+}
+
+function stepSelectedBoneTransform(axis: 'x' | 'y' | 'z', direction: 1 | -1): void {
+    beginBonePoseUndoTransaction();
+    const changed = viewer.stepSelectedBoneTransform(axis, direction);
+    commitBonePoseUndoTransaction();
+    if (!changed) return;
+    syncAnimationEditor();
 }
 
 // ----- Status chips ----------------------------------------------------------
@@ -3770,7 +3845,7 @@ function activateDocument(id: string, options: { fit?: boolean } = {}): void {
     viewer.setActiveModel(target.root, { fit: options.fit ?? true });
     resetUvView();
     syncDocumentState();
-    refreshStats();
+    scheduleRefreshStats();
     refreshButtons();
     syncPropertyPanel();
     syncMaterialControls();
@@ -3803,7 +3878,7 @@ function closeDocument(id: string): void {
     if (wasActive) activateDocument(activeDocumentId, { fit: false });
     else {
         syncDocumentState();
-        refreshStats();
+        scheduleRefreshStats();
         refreshButtons();
         syncPropertyPanel();
         syncMaterialControls();
@@ -3838,7 +3913,7 @@ function clearActiveDocument(): void {
     viewer.setActiveModel(active.root, { fit: true });
     viewer.disposeModel(rootToDispose);
     syncDocumentState();
-    refreshStats();
+    scheduleRefreshStats();
     refreshButtons();
     syncPropertyPanel();
     syncMaterialControls();
@@ -4235,6 +4310,18 @@ function syncDocumentState(): void {
     renderDocumentTabs();
     updateWindowTitle(active.name);
     updateStatusChips();
+}
+
+function scheduleRefreshStats(): void {
+    if (statsRefreshRaf) cancelAnimationFrame(statsRefreshRaf);
+    statVerts.textContent = '…';
+    statFaces.textContent = '…';
+    statEdges.textContent = '…';
+    statMeshes.textContent = '…';
+    statsRefreshRaf = requestAnimationFrame(() => {
+        statsRefreshRaf = 0;
+        refreshStats();
+    });
 }
 
 function refreshStats(): void {

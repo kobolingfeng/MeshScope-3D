@@ -46,6 +46,9 @@ import type { KeyframeTrack } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 
+const BONE_ROTATION_STEP_RADIANS = Math.PI / 90;
+const BONE_TRANSLATION_STEP_RATIO = 0.005;
+
 export type MaterialEditMode = 'original' | 'solid' | 'xray';
 export type TextureSlotId =
     | 'map'
@@ -262,6 +265,18 @@ export class Viewer {
     private mixerRoot: Object3D | null = null;
     private animClips: AnimationClip[] = [];
     private animClipMetas: AnimationClipMeta[] = [];
+    private animationEditorCache: {
+        clip: AnimationClip;
+        index: number;
+        trackCount: number;
+        tracks: AnimationTrackMeta[];
+    } | null = null;
+    private timelineMarkerCache: {
+        clip: AnimationClip;
+        selectedBone: Bone | null;
+        trackCount: number;
+        markers: AnimationTimelineMarker[];
+    } | null = null;
     private activeAction: AnimationAction | null = null;
     private activeClipIndex = -1;
     private animationPlaying = false;
@@ -275,6 +290,7 @@ export class Viewer {
     private skeletonEditorActivated = false;
     private skeletonHelper: SkeletonHelper | null = null;
     private bones: Bone[] = [];
+    private boneMetaBase: Array<Omit<SkeletonBoneMeta, 'selected'>> = [];
     private selectedBone: Bone | null = null;
     private boneHandles = new Map<Bone, Mesh>();
     private boneLines = new Map<Bone, Line>();
@@ -454,7 +470,6 @@ export class Viewer {
     }
 
     addModel(object: Object3D, opts: { fit?: boolean } = { fit: true }): void {
-        this.ensureMaterialEditorState(object);
         this.modelGroup.add(object);
         if (opts.fit) this.frameObject(object);
         if (this.wireframe) this.applyWireframe(object, true);
@@ -1144,7 +1159,7 @@ export class Viewer {
             activeIndex: this.activeClipIndex,
             clipName: clip.name && clip.name.trim() ? clip.name : `Clip ${this.activeClipIndex + 1}`,
             duration: clip.duration,
-            tracks: clip.tracks.map((track, index) => buildAnimationTrackMeta(track, index)),
+            tracks: this.getCachedAnimationTrackMetas(clip),
         };
     }
 
@@ -1155,13 +1170,9 @@ export class Viewer {
             hasSkeleton: this.bones.length > 0,
             skeletonVisible: this.skeletonVisible,
             transformControlsVisible: this.transformControlsVisible,
-            bones: this.bones.map((bone, index) => ({
-                index,
-                name: getBoneDisplayName(bone, index),
-                parentName: bone.parent && (bone.parent as Bone).isBone
-                    ? getBoneDisplayName(bone.parent as Bone, this.bones.indexOf(bone.parent as Bone))
-                    : '',
-                selected: bone === this.selectedBone,
+            bones: this.boneMetaBase.map((bone) => ({
+                ...bone,
+                selected: bone.index === selectedIndex,
             })),
             selectedBoneIndex: selectedIndex,
             selectedBoneName: selectedName,
@@ -1193,6 +1204,7 @@ export class Viewer {
     selectBone(index: number): void {
         const bone = this.bones[index] ?? null;
         this.selectedBone = bone;
+        this.timelineMarkerCache = null;
         this.refreshIkChain();
         this.attachTransformTarget();
         this.updateSkeletonOverlay();
@@ -1477,6 +1489,28 @@ export class Viewer {
         return true;
     }
 
+    stepSelectedBoneTransform(axis: 'x' | 'y' | 'z', direction: 1 | -1): boolean {
+        const bone = this.selectedBone;
+        if (!bone) return false;
+
+        if (this.boneTransformMode === 'translate') {
+            const bounds = this.getModelBounds();
+            const maxDim = bounds ? Math.max(bounds.size.x, bounds.size.y, bounds.size.z) : 1;
+            const step = Math.max(maxDim * BONE_TRANSLATION_STEP_RATIO, 0.001);
+            bone.position[axis] += step * direction;
+        } else {
+            const euler = new Euler().setFromQuaternion(bone.quaternion, 'XYZ');
+            euler[axis] += BONE_ROTATION_STEP_RADIANS * direction;
+            bone.quaternion.setFromEuler(euler);
+        }
+
+        bone.updateMatrixWorld(true);
+        if (this.ikEnabled) this.solveIk();
+        this.updateSkeletonOverlay();
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+        return true;
+    }
+
     findBoneIndexByName(name: string): number {
         if (!name) return -1;
         const direct = this.bones.findIndex((bone) => bone.name === name);
@@ -1492,8 +1526,8 @@ export class Viewer {
 
     seekToNearestKeyframe(direction: 1 | -1): boolean {
         const clip = this.animClips[this.activeClipIndex];
-        if (!clip || !this.activeAction) return false;
-        const current = this.activeAction.time;
+        if (!clip) return false;
+        const current = this.activeAction?.time ?? 0;
         const epsilon = 1e-4;
         const times = new Set<number>();
         for (const track of clip.tracks) {
@@ -1757,12 +1791,35 @@ export class Viewer {
     }
 
     private refreshAnimationClipMetas(): void {
+        this.animationEditorCache = null;
+        this.timelineMarkerCache = null;
         this.animClipMetas = this.animClips.map((clip, index) => ({
             index,
             name: clip.name && clip.name.trim() ? clip.name : `Clip ${index + 1}`,
             duration: clip.duration,
             tracks: clip.tracks.length,
         }));
+    }
+
+    private getCachedAnimationTrackMetas(clip: AnimationClip): AnimationTrackMeta[] {
+        const cache = this.animationEditorCache;
+        if (
+            cache
+            && cache.clip === clip
+            && cache.index === this.activeClipIndex
+            && cache.trackCount === clip.tracks.length
+        ) {
+            return cache.tracks;
+        }
+
+        const tracks = clip.tracks.map((track, index) => buildAnimationTrackMeta(track, index));
+        this.animationEditorCache = {
+            clip,
+            index: this.activeClipIndex,
+            trackCount: clip.tracks.length,
+            tracks,
+        };
+        return tracks;
     }
 
     private refreshActiveAnimationAfterEdit(clipIndex: number): void {
@@ -1848,6 +1905,13 @@ export class Viewer {
     private attachSkeletonEditor(object: Object3D): void {
         this.disposeSkeletonEditor();
         this.bones = collectBones(object);
+        this.boneMetaBase = this.bones.map((bone, index) => ({
+            index,
+            name: getBoneDisplayName(bone, index),
+            parentName: bone.parent && (bone.parent as Bone).isBone
+                ? getBoneDisplayName(bone.parent as Bone, this.bones.indexOf(bone.parent as Bone))
+                : '',
+        }));
         if (this.bones.length === 0) {
             this.onSkeletonChanged(this.getSkeletonEditorState());
             return;
@@ -1916,6 +1980,8 @@ export class Viewer {
         this.ikTargetMesh = null;
         this.ikChain = [];
         this.bones = [];
+        this.boneMetaBase = [];
+        this.timelineMarkerCache = null;
         this.selectedBone = null;
         this.ikEnabled = false;
         this.onSkeletonChanged(this.getSkeletonEditorState());
@@ -2084,6 +2150,15 @@ export class Viewer {
     private getTimelineMarkers(): AnimationTimelineMarker[] {
         const clip = this.animClips[this.activeClipIndex];
         if (!clip) return [];
+        const cache = this.timelineMarkerCache;
+        if (
+            cache
+            && cache.clip === clip
+            && cache.selectedBone === this.selectedBone
+            && cache.trackCount === clip.tracks.length
+        ) {
+            return cache.markers;
+        }
 
         const selectedTrackNames = this.selectedBone
             ? new Set([
@@ -2104,7 +2179,14 @@ export class Viewer {
             }
         }
 
-        return [...times.values()].sort((a, b) => a.time - b.time);
+        const markers = [...times.values()].sort((a, b) => a.time - b.time);
+        this.timelineMarkerCache = {
+            clip,
+            selectedBone: this.selectedBone,
+            trackCount: clip.tracks.length,
+            markers,
+        };
+        return markers;
     }
 
     private disposeAnimations(): void {
@@ -2173,6 +2255,10 @@ function collectAnimationClips(root: Object3D): AnimationClip[] {
             }
         }
     };
+
+    consume(root.userData?.animations);
+    consume((root as Object3D & { animations?: AnimationClip[] }).animations);
+    if (result.length > 0) return result;
 
     root.traverse((node: Object3D) => {
         consume(node.userData?.animations);
