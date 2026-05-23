@@ -26,6 +26,22 @@ export const dialog = {
 
 export const fs = {
     readTextFile:   (path: string) => invoke<string>('fs.readTextFile', { path }),
+    createGlbPreview: (path: string, minBytes = 512 * 1024 * 1024) =>
+        invoke<{
+            used: boolean;
+            url?: string;
+            path?: string;
+            reason?: string;
+            originalBytes?: number;
+            previewBytes?: number;
+            animationsRemoved?: number;
+            accessorsKept?: number;
+            bufferViewsKept?: number;
+        }>('fs.createGlbPreview', {
+            path,
+            minBytes,
+            protocol: typeof window !== 'undefined' ? window.location.protocol : 'http:',
+        }),
     localFileUrl:   (path: string) => invoke<string>('fs.localFileUrl', {
         path,
         protocol: typeof window !== 'undefined' ? window.location.protocol : 'http:',

@@ -43,6 +43,7 @@
 #include <mutex>
 #include <atomic>
 #include <algorithm>
+#include <set>
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "ole32.lib")
@@ -532,6 +533,383 @@ static HRESULT respond_local_file_resource(
     return S_OK;
 }
 
+static void write_u32(std::ofstream& out, uint32_t value) {
+    out.write(reinterpret_cast<const char*>(&value), sizeof(value));
+}
+
+static void add_json_index(const json& array, int index, std::set<int>& target) {
+    if (index >= 0 && index < static_cast<int>(array.size())) target.insert(index);
+}
+
+static void collect_accessor_refs_recursive(
+    const json& node,
+    const json& accessors,
+    const json& bufferViews,
+    std::set<int>& usedAccessors,
+    std::set<int>& usedBufferViews
+) {
+    if (node.is_object()) {
+        for (auto it = node.begin(); it != node.end(); ++it) {
+            const std::string key = it.key();
+            if (key == "accessors" || key == "bufferViews" || key == "buffers" || key == "animations") {
+                continue;
+            }
+            if (key == "accessor" && it.value().is_number_integer()) {
+                add_json_index(accessors, it.value().get<int>(), usedAccessors);
+                continue;
+            }
+            if (key == "bufferView" && it.value().is_number_integer()) {
+                add_json_index(bufferViews, it.value().get<int>(), usedBufferViews);
+                continue;
+            }
+            collect_accessor_refs_recursive(it.value(), accessors, bufferViews, usedAccessors, usedBufferViews);
+        }
+        return;
+    }
+    if (node.is_array()) {
+        for (const auto& child : node) {
+            collect_accessor_refs_recursive(child, accessors, bufferViews, usedAccessors, usedBufferViews);
+        }
+    }
+}
+
+static void collect_mesh_accessor_refs(const json& doc, std::set<int>& usedAccessors, std::set<int>& usedBufferViews) {
+    const json emptyArray = json::array();
+    const auto& accessors = doc.contains("accessors") && doc["accessors"].is_array()
+        ? doc["accessors"]
+        : emptyArray;
+    const auto& bufferViews = doc.contains("bufferViews") && doc["bufferViews"].is_array()
+        ? doc["bufferViews"]
+        : emptyArray;
+
+    if (doc.contains("meshes") && doc["meshes"].is_array()) {
+        for (const auto& mesh : doc["meshes"]) {
+            if (!mesh.contains("primitives") || !mesh["primitives"].is_array()) continue;
+            for (const auto& primitive : mesh["primitives"]) {
+                if (primitive.contains("indices") && primitive["indices"].is_number_integer()) {
+                    add_json_index(accessors, primitive["indices"].get<int>(), usedAccessors);
+                }
+                if (primitive.contains("attributes") && primitive["attributes"].is_object()) {
+                    for (const auto& item : primitive["attributes"].items()) {
+                        if (item.value().is_number_integer()) add_json_index(accessors, item.value().get<int>(), usedAccessors);
+                    }
+                }
+                if (primitive.contains("targets") && primitive["targets"].is_array()) {
+                    for (const auto& target : primitive["targets"]) {
+                        if (!target.is_object()) continue;
+                        for (const auto& item : target.items()) {
+                            if (item.value().is_number_integer()) add_json_index(accessors, item.value().get<int>(), usedAccessors);
+                        }
+                    }
+                }
+                if (primitive.contains("extensions")) {
+                    collect_accessor_refs_recursive(
+                        primitive["extensions"],
+                        accessors,
+                        bufferViews,
+                        usedAccessors,
+                        usedBufferViews);
+                }
+            }
+        }
+    }
+
+    if (doc.contains("skins") && doc["skins"].is_array()) {
+        for (const auto& skin : doc["skins"]) {
+            if (skin.contains("inverseBindMatrices") && skin["inverseBindMatrices"].is_number_integer()) {
+                add_json_index(accessors, skin["inverseBindMatrices"].get<int>(), usedAccessors);
+            }
+        }
+    }
+
+    if (doc.contains("images") && doc["images"].is_array()) {
+        for (const auto& image : doc["images"]) {
+            if (image.contains("bufferView") && image["bufferView"].is_number_integer()) {
+                add_json_index(bufferViews, image["bufferView"].get<int>(), usedBufferViews);
+            }
+        }
+    }
+
+    collect_accessor_refs_recursive(doc, accessors, bufferViews, usedAccessors, usedBufferViews);
+
+    for (const int accessorIndex : usedAccessors) {
+        const auto& accessor = accessors[accessorIndex];
+        if (accessor.contains("bufferView") && accessor["bufferView"].is_number_integer()) {
+            add_json_index(bufferViews, accessor["bufferView"].get<int>(), usedBufferViews);
+        }
+        if (accessor.contains("sparse") && accessor["sparse"].is_object()) {
+            const auto& sparse = accessor["sparse"];
+            if (sparse.contains("indices") && sparse["indices"].contains("bufferView")) {
+                add_json_index(bufferViews, sparse["indices"]["bufferView"].get<int>(), usedBufferViews);
+            }
+            if (sparse.contains("values") && sparse["values"].contains("bufferView")) {
+                add_json_index(bufferViews, sparse["values"]["bufferView"].get<int>(), usedBufferViews);
+            }
+        }
+    }
+}
+
+static int mapped_index(const std::vector<int>& map, int index) {
+    return index >= 0 && index < static_cast<int>(map.size()) ? map[index] : -1;
+}
+
+static void remap_direct_refs_recursive(json& node, const std::vector<int>& accessorMap, const std::vector<int>& bufferViewMap) {
+    if (node.is_object()) {
+        for (auto it = node.begin(); it != node.end(); ++it) {
+            const std::string key = it.key();
+            if (key == "accessors" || key == "bufferViews" || key == "buffers" || key == "animations") {
+                continue;
+            }
+            if (key == "accessor" && it.value().is_number_integer()) {
+                const int mapped = mapped_index(accessorMap, it.value().get<int>());
+                if (mapped >= 0) it.value() = mapped;
+                continue;
+            }
+            if (key == "bufferView" && it.value().is_number_integer()) {
+                const int mapped = mapped_index(bufferViewMap, it.value().get<int>());
+                if (mapped >= 0) it.value() = mapped;
+                continue;
+            }
+            remap_direct_refs_recursive(it.value(), accessorMap, bufferViewMap);
+        }
+        return;
+    }
+    if (node.is_array()) {
+        for (auto& child : node) remap_direct_refs_recursive(child, accessorMap, bufferViewMap);
+    }
+}
+
+static void remap_mesh_accessor_refs(json& doc, const std::vector<int>& accessorMap) {
+    if (doc.contains("meshes") && doc["meshes"].is_array()) {
+        for (auto& mesh : doc["meshes"]) {
+            if (!mesh.contains("primitives") || !mesh["primitives"].is_array()) continue;
+            for (auto& primitive : mesh["primitives"]) {
+                if (primitive.contains("indices") && primitive["indices"].is_number_integer()) {
+                    const int mapped = mapped_index(accessorMap, primitive["indices"].get<int>());
+                    if (mapped >= 0) primitive["indices"] = mapped;
+                }
+                if (primitive.contains("attributes") && primitive["attributes"].is_object()) {
+                    for (auto& item : primitive["attributes"].items()) {
+                        if (!item.value().is_number_integer()) continue;
+                        const int mapped = mapped_index(accessorMap, item.value().get<int>());
+                        if (mapped >= 0) item.value() = mapped;
+                    }
+                }
+                if (primitive.contains("targets") && primitive["targets"].is_array()) {
+                    for (auto& target : primitive["targets"]) {
+                        if (!target.is_object()) continue;
+                        for (auto& item : target.items()) {
+                            if (!item.value().is_number_integer()) continue;
+                            const int mapped = mapped_index(accessorMap, item.value().get<int>());
+                            if (mapped >= 0) item.value() = mapped;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if (doc.contains("skins") && doc["skins"].is_array()) {
+        for (auto& skin : doc["skins"]) {
+            if (!skin.contains("inverseBindMatrices") || !skin["inverseBindMatrices"].is_number_integer()) continue;
+            const int mapped = mapped_index(accessorMap, skin["inverseBindMatrices"].get<int>());
+            if (mapped >= 0) skin["inverseBindMatrices"] = mapped;
+        }
+    }
+}
+
+static void copy_stream_range(std::ifstream& in, std::ofstream& out, uint64_t offset, uint64_t length) {
+    constexpr size_t kChunk = 1024 * 1024;
+    std::vector<char> buffer(kChunk);
+    in.seekg(static_cast<std::streamoff>(offset), std::ios::beg);
+    uint64_t remaining = length;
+    while (remaining > 0) {
+        const size_t readSize = static_cast<size_t>(std::min<uint64_t>(remaining, buffer.size()));
+        in.read(buffer.data(), static_cast<std::streamsize>(readSize));
+        const auto got = static_cast<size_t>(in.gcount());
+        if (got == 0) throw std::runtime_error("Unexpected EOF while copying GLB bufferView");
+        out.write(buffer.data(), static_cast<std::streamsize>(got));
+        remaining -= got;
+    }
+}
+
+static json create_glb_preview_file(const std::wstring& sourcePath, const std::string& protocol, uint64_t minBytes) {
+    std::ifstream in(sourcePath, std::ios::binary);
+    if (!in) throw std::runtime_error("Cannot open GLB");
+
+    uint32_t header[3] = {};
+    in.read(reinterpret_cast<char*>(header), sizeof(header));
+    if (!in || header[0] != 0x46546C67 || header[1] != 2) {
+        throw std::runtime_error("Not a GLB v2 file");
+    }
+    const uint64_t totalLength = header[2];
+    if (minBytes > 0 && totalLength < minBytes) {
+        return {{"used", false}, {"reason", "below-threshold"}, {"originalBytes", totalLength}};
+    }
+
+    uint64_t cursor = 12;
+    uint64_t binOffset = 0;
+    uint32_t binLength = 0;
+    std::string jsonText;
+
+    while (cursor + 8 <= totalLength) {
+        uint32_t chunkLength = 0;
+        uint32_t chunkType = 0;
+        in.seekg(static_cast<std::streamoff>(cursor), std::ios::beg);
+        in.read(reinterpret_cast<char*>(&chunkLength), 4);
+        in.read(reinterpret_cast<char*>(&chunkType), 4);
+        cursor += 8;
+        if (!in || cursor + chunkLength > totalLength) break;
+
+        if (chunkType == 0x4E4F534A) {
+            jsonText.resize(chunkLength);
+            in.read(jsonText.data(), chunkLength);
+        } else if (chunkType == 0x004E4942) {
+            binOffset = cursor;
+            binLength = chunkLength;
+        }
+        cursor += chunkLength;
+    }
+
+    if (jsonText.empty() || binOffset == 0 || binLength == 0) {
+        throw std::runtime_error("GLB is missing JSON or BIN chunk");
+    }
+
+    json doc = json::parse(jsonText);
+    const int animationCount = doc.contains("animations") && doc["animations"].is_array()
+        ? static_cast<int>(doc["animations"].size())
+        : 0;
+    if (animationCount <= 0) {
+        return {{"used", false}, {"reason", "no-animations"}, {"originalBytes", totalLength}};
+    }
+
+    doc.erase("animations");
+    std::set<int> usedAccessors;
+    std::set<int> usedBufferViews;
+    collect_mesh_accessor_refs(doc, usedAccessors, usedBufferViews);
+    if (usedBufferViews.empty()) {
+        return {{"used", false}, {"reason", "no-bufferViews"}, {"originalBytes", totalLength}};
+    }
+
+    const auto token = make_local_file_token();
+    const std::wstring cacheDir = app_data_dir() + L"\\preview-cache";
+    fspath::create_directories(cacheDir);
+    const std::wstring previewPath = cacheDir + L"\\" + U2W(token) + L".glb";
+    const std::wstring tempBinPath = cacheDir + L"\\" + U2W(token) + L".bin";
+
+    const json emptyArray = json::array();
+    const auto& oldAccessors = doc.contains("accessors") && doc["accessors"].is_array()
+        ? doc["accessors"]
+        : emptyArray;
+    const auto& oldBufferViews = doc.contains("bufferViews") && doc["bufferViews"].is_array()
+        ? doc["bufferViews"]
+        : emptyArray;
+
+    std::vector<int> accessorMap(oldAccessors.size(), -1);
+    std::vector<int> bufferViewMap(oldBufferViews.size(), -1);
+    json newAccessors = json::array();
+    json newBufferViews = json::array();
+
+    for (const int accessorIndex : usedAccessors) {
+        accessorMap[accessorIndex] = static_cast<int>(newAccessors.size());
+        newAccessors.push_back(oldAccessors[accessorIndex]);
+    }
+
+    std::ofstream tempBin(tempBinPath, std::ios::binary);
+    if (!tempBin) throw std::runtime_error("Cannot create preview BIN");
+
+    uint64_t compactBinLength = 0;
+    for (const int bufferViewIndex : usedBufferViews) {
+        if (bufferViewIndex < 0 || bufferViewIndex >= static_cast<int>(oldBufferViews.size())) continue;
+        auto view = oldBufferViews[bufferViewIndex];
+        const uint64_t byteOffset = view.value("byteOffset", 0);
+        const uint64_t byteLength = view.value("byteLength", 0);
+        if (byteOffset + byteLength > binLength) {
+            throw std::runtime_error("Invalid GLB bufferView range");
+        }
+        const uint64_t padding = (4 - (compactBinLength % 4)) % 4;
+        for (uint64_t i = 0; i < padding; ++i) tempBin.put('\0');
+        compactBinLength += padding;
+
+        bufferViewMap[bufferViewIndex] = static_cast<int>(newBufferViews.size());
+        view["buffer"] = 0;
+        view["byteOffset"] = compactBinLength;
+        newBufferViews.push_back(view);
+        copy_stream_range(in, tempBin, binOffset + byteOffset, byteLength);
+        compactBinLength += byteLength;
+    }
+    const uint64_t finalBinPadding = (4 - (compactBinLength % 4)) % 4;
+    for (uint64_t i = 0; i < finalBinPadding; ++i) tempBin.put('\0');
+    compactBinLength += finalBinPadding;
+    tempBin.close();
+
+    for (auto& accessor : newAccessors) {
+        if (accessor.contains("bufferView") && accessor["bufferView"].is_number_integer()) {
+            const int mapped = mapped_index(bufferViewMap, accessor["bufferView"].get<int>());
+            if (mapped >= 0) accessor["bufferView"] = mapped;
+        }
+        if (accessor.contains("sparse") && accessor["sparse"].is_object()) {
+            auto& sparse = accessor["sparse"];
+            if (sparse.contains("indices") && sparse["indices"].contains("bufferView")) {
+                const int mapped = mapped_index(bufferViewMap, sparse["indices"]["bufferView"].get<int>());
+                if (mapped >= 0) sparse["indices"]["bufferView"] = mapped;
+            }
+            if (sparse.contains("values") && sparse["values"].contains("bufferView")) {
+                const int mapped = mapped_index(bufferViewMap, sparse["values"]["bufferView"].get<int>());
+                if (mapped >= 0) sparse["values"]["bufferView"] = mapped;
+            }
+        }
+    }
+
+    remap_direct_refs_recursive(doc, accessorMap, bufferViewMap);
+    remap_mesh_accessor_refs(doc, accessorMap);
+    doc["accessors"] = newAccessors;
+    doc["bufferViews"] = newBufferViews;
+    doc["buffers"] = json::array({{{"byteLength", compactBinLength}}});
+
+    std::string compactJson = doc.dump();
+    const uint32_t jsonPadding = static_cast<uint32_t>((4 - (compactJson.size() % 4)) % 4);
+    compactJson.append(jsonPadding, ' ');
+
+    const uint64_t previewLength = 12 + 8 + compactJson.size() + 8 + compactBinLength;
+    if (previewLength > UINT32_MAX || compactJson.size() > UINT32_MAX || compactBinLength > UINT32_MAX) {
+        throw std::runtime_error("Preview GLB is too large");
+    }
+
+    std::ofstream out(previewPath, std::ios::binary);
+    if (!out) throw std::runtime_error("Cannot create preview GLB");
+    write_u32(out, 0x46546C67);
+    write_u32(out, 2);
+    write_u32(out, static_cast<uint32_t>(previewLength));
+    write_u32(out, static_cast<uint32_t>(compactJson.size()));
+    write_u32(out, 0x4E4F534A);
+    out.write(compactJson.data(), static_cast<std::streamsize>(compactJson.size()));
+    write_u32(out, static_cast<uint32_t>(compactBinLength));
+    write_u32(out, 0x004E4942);
+
+    std::ifstream binIn(tempBinPath, std::ios::binary);
+    copy_stream_range(binIn, out, 0, compactBinLength);
+    out.close();
+    binIn.close();
+    DeleteFileW(tempBinPath.c_str());
+
+    {
+        std::lock_guard<std::mutex> lock(g_localFileTokensMutex);
+        g_localFileTokens[token] = previewPath;
+    }
+
+    const auto urlProtocol = protocol == "https:" ? std::string{"https"} : std::string{"http"};
+    return {
+        {"used", true},
+        {"url", urlProtocol + "://app.localhost/__meshscope_file__/" + token},
+        {"path", W2U(previewPath)},
+        {"originalBytes", totalLength},
+        {"previewBytes", previewLength},
+        {"animationsRemoved", animationCount},
+        {"accessorsKept", newAccessors.size()},
+        {"bufferViewsKept", newBufferViews.size()}
+    };
+}
+
 static void register_local_file_resource_handler() {
     if (!g_view) return;
     g_view->AddWebResourceRequestedFilter(
@@ -1019,6 +1397,13 @@ static void reg_dialog() {
 // ================================================================
 
 static void reg_fs() {
+    ipc_on("fs.createGlbPreview", [](const json& a) -> json {
+        auto path = U2W(a.value("path", std::string{}));
+        if (path.empty()) throw std::runtime_error("Missing path");
+        const auto protocol = a.value("protocol", std::string{"http:"});
+        const uint64_t minBytes = a.value("minBytes", static_cast<uint64_t>(512ull * 1024ull * 1024ull));
+        return create_glb_preview_file(path, protocol, minBytes);
+    });
     ipc_on("fs.localFileUrl", [](const json& a) -> json {
         auto path = U2W(a.value("path", std::string{}));
         if (path.empty()) throw std::runtime_error("Missing path");

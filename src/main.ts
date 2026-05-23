@@ -4158,6 +4158,7 @@ async function loadFiles(files: File[]): Promise<void> {
             ? (mainFile as File & { path: string }).path
             : undefined;
         openDocumentWithModel(mainFile.name, model, sourcePath);
+        showModelLoadNotice(model);
         showToast(`已加载 ${mainFile.name}`, 'success');
     } catch (error) {
         console.error(error);
@@ -4184,6 +4185,7 @@ async function loadNativePaths(paths: string[]): Promise<void> {
         try {
             const model = await loadFromPath(path);
             openDocumentWithModel(name, model, path);
+            showModelLoadNotice(model);
             loadedCount += 1;
             lastLoadedName = name;
         } catch (error) {
@@ -4207,6 +4209,20 @@ function enqueueNativePathLoad(paths: string[]): Promise<void> {
     return nativeOpenQueue.catch((error) => {
         console.error(error);
     });
+}
+
+function showModelLoadNotice(model: Object3D): void {
+    const notice = model.userData?.__meshscopeLoadNotice as {
+        type?: string;
+        originalBytes?: number;
+        previewBytes?: number;
+        animationsRemoved?: number;
+    } | undefined;
+    if (notice?.type !== 'large-glb-preview') return;
+    showToast(
+        `超大 GLB 已快速预览：${formatBytes(notice.originalBytes ?? 0)} -> ${formatBytes(notice.previewBytes ?? 0)}，暂跳过 ${notice.animationsRemoved ?? 0} 个动画`,
+        'info',
+    );
 }
 
 async function handleOpenUrls(urls: string[]): Promise<void> {
@@ -6300,6 +6316,18 @@ function fileNameOfPath(path: string): string {
     const normalized = path.replaceAll('/', '\\');
     const index = normalized.lastIndexOf('\\');
     return index >= 0 ? normalized.slice(index + 1) : normalized;
+}
+
+function formatBytes(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = bytes;
+    let unitIndex = 0;
+    while (value >= 1024 && unitIndex < units.length - 1) {
+        value /= 1024;
+        unitIndex += 1;
+    }
+    return `${value >= 10 || unitIndex === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unitIndex]}`;
 }
 
 // Module bootstrap. Kept at file end so every `const`/`let` (especially

@@ -15,6 +15,7 @@ import { fs } from './api';
 export type SupportedExt = 'gltf' | 'glb' | 'obj' | 'stl' | 'ply' | 'fbx';
 
 export const ACCEPT_EXTS: SupportedExt[] = ['gltf', 'glb', 'obj', 'stl', 'ply', 'fbx'];
+const LARGE_GLB_PREVIEW_THRESHOLD = 512 * 1024 * 1024;
 
 export function extOf(name: string): string {
     const i = name.lastIndexOf('.');
@@ -39,6 +40,13 @@ export async function loadFromFiles(files: File[]): Promise<Object3D> {
     }
 
     const ext = extOf(mainFile.name) as SupportedExt;
+    const nativePath = typeof (mainFile as File & { path?: unknown }).path === 'string'
+        ? (mainFile as File & { path: string }).path
+        : '';
+    if (nativePath && (ext === 'glb' || ext === 'fbx' || ext === 'stl' || ext === 'ply')) {
+        return loadFromPath(nativePath);
+    }
+
     const buf = await mainFile.arrayBuffer();
 
     switch (ext) {
@@ -70,7 +78,7 @@ export async function loadFromPath(path: string): Promise<Object3D> {
             return loadGLTF(textToArrayBuffer(text), assets);
         }
         case 'glb':
-            return loadGLTF(await readNativeBinaryFile(path), new Map());
+            return loadGLBFromPath(path);
         case 'obj': {
             const text = await fs.readTextFile(path);
             const assets = await collectObjAssets(path, text);
@@ -85,15 +93,34 @@ export async function loadFromPath(path: string): Promise<Object3D> {
     }
 }
 
+async function loadGLBFromPath(path: string): Promise<Object3D> {
+    const preview = await fs.createGlbPreview(path, LARGE_GLB_PREVIEW_THRESHOLD).catch(() => null);
+    if (preview?.used && preview.url) {
+        const model = await loadGLTF(await readNativeBinaryUrl(preview.url), new Map());
+        model.userData.__meshscopeLoadNotice = {
+            type: 'large-glb-preview',
+            originalBytes: preview.originalBytes ?? 0,
+            previewBytes: preview.previewBytes ?? 0,
+            animationsRemoved: preview.animationsRemoved ?? 0,
+        };
+        return model;
+    }
+    return loadGLTF(await readNativeBinaryFile(path), new Map());
+}
+
 async function readNativeBinaryFile(path: string): Promise<ArrayBuffer> {
     try {
         const url = await fs.localFileUrl(path);
-        const response = await fetch(url);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return await response.arrayBuffer();
+        return await readNativeBinaryUrl(url);
     } catch {
         return base64ToArrayBuffer(await fs.readBase64File(path));
     }
+}
+
+async function readNativeBinaryUrl(url: string): Promise<ArrayBuffer> {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.arrayBuffer();
 }
 
 async function loadGLTF(buf: ArrayBuffer, assets: Map<string, Blob>): Promise<Object3D> {
