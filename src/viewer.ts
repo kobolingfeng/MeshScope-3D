@@ -114,6 +114,16 @@ export type AnimationClipMeta = {
     name: string;
     duration: number;
     tracks: number;
+    lazy?: boolean;
+};
+
+export type LazyAnimationClipSource = {
+    type: 'large-glb-animation';
+    path: string;
+    index: number;
+    name: string;
+    duration: number;
+    tracks: number;
 };
 
 export type AnimationPlaybackState = {
@@ -1590,6 +1600,46 @@ export class Viewer {
         return newIndex;
     }
 
+    getLazyAnimationClipSource(index = this.activeClipIndex): LazyAnimationClipSource | null {
+        const clip = this.animClips[index];
+        return clip ? getLazyAnimationClipSource(clip) : null;
+    }
+
+    replaceAnimationClip(index: number, clip: AnimationClip, opts: { activate?: boolean; autoPlay?: boolean } = {}): boolean {
+        if (index < 0 || index >= this.animClips.length) return false;
+        const root = this.mixerRoot ?? this.getActiveRoot();
+        if (!root) return false;
+
+        const previous = this.animClips[index];
+        const wasActive = this.activeClipIndex === index;
+        const shouldActivate = opts.activate ?? wasActive;
+        const autoPlay = opts.autoPlay ?? (wasActive && this.animationPlaying);
+
+        if (this.mixer) {
+            if (wasActive && this.activeAction) this.activeAction.stop();
+            this.mixer.uncacheClip(previous);
+        }
+
+        this.animClips[index] = clip;
+        this.bindAnimationClipsToRoot(root);
+        this.ensureAnimationMixer(root);
+        this.refreshAnimationClipMetas();
+
+        if (shouldActivate) {
+            this.activeAction = null;
+            this.activeClipIndex = -1;
+            this.animationPlaying = false;
+            this.animationFinished = false;
+            this.lastReportedTime = -1;
+            this.selectAnimationClip(index, { autoPlay });
+        } else {
+            this.onAnimationsChanged(this.getAnimationState());
+        }
+
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+        return true;
+    }
+
     deleteAnimationClip(index: number): boolean {
         const clip = this.animClips[index];
         if (!clip || !this.mixer) return false;
@@ -1854,12 +1904,16 @@ export class Viewer {
     private refreshAnimationClipMetas(): void {
         this.animationEditorCache = null;
         this.timelineMarkerCache = null;
-        this.animClipMetas = this.animClips.map((clip, index) => ({
-            index,
-            name: clip.name && clip.name.trim() ? clip.name : `Clip ${index + 1}`,
-            duration: clip.duration,
-            tracks: clip.tracks.length,
-        }));
+        this.animClipMetas = this.animClips.map((clip, index) => {
+            const lazy = getLazyAnimationClipSource(clip);
+            return {
+                index,
+                name: clip.name && clip.name.trim() ? clip.name : `Clip ${index + 1}`,
+                duration: lazy?.duration ?? clip.duration,
+                tracks: lazy?.tracks ?? clip.tracks.length,
+                lazy: Boolean(lazy),
+            };
+        });
     }
 
     private getCachedAnimationTrackMetas(clip: AnimationClip): AnimationTrackMeta[] {
@@ -2340,6 +2394,23 @@ function collectAnimationClips(root: Object3D): AnimationClip[] {
     });
 
     return result;
+}
+
+function getLazyAnimationClipSource(clip: AnimationClip): LazyAnimationClipSource | null {
+    const userData = (clip as AnimationClip & {
+        userData?: { __meshscopeLazyGlbAnimation?: Partial<LazyAnimationClipSource> };
+    }).userData;
+    const source = userData?.__meshscopeLazyGlbAnimation;
+    if (source?.type !== 'large-glb-animation') return null;
+    if (!source.path || typeof source.index !== 'number') return null;
+    return {
+        type: 'large-glb-animation',
+        path: source.path,
+        index: source.index,
+        name: source.name || clip.name || `Animation ${source.index + 1}`,
+        duration: typeof source.duration === 'number' ? source.duration : clip.duration,
+        tracks: typeof source.tracks === 'number' ? source.tracks : clip.tracks.length,
+    };
 }
 
 function collectBones(root: Object3D): Bone[] {

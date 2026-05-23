@@ -13,6 +13,14 @@ import {
 import { fs } from './api';
 
 export type SupportedExt = 'gltf' | 'glb' | 'obj' | 'stl' | 'ply' | 'fbx';
+export type LazyGlbAnimationSource = {
+    type: 'large-glb-animation';
+    path: string;
+    index: number;
+    name: string;
+    duration: number;
+    tracks: number;
+};
 
 export const ACCEPT_EXTS: SupportedExt[] = ['gltf', 'glb', 'obj', 'stl', 'ply', 'fbx'];
 const LARGE_GLB_PREVIEW_THRESHOLD = 512 * 1024 * 1024;
@@ -97,15 +105,45 @@ async function loadGLBFromPath(path: string): Promise<Object3D> {
     const preview = await fs.createGlbPreview(path, LARGE_GLB_PREVIEW_THRESHOLD).catch(() => null);
     if (preview?.used && preview.url) {
         const model = await loadGLTF(await readNativeBinaryUrl(preview.url), new Map());
+        const lazyAnimations = (preview.animations ?? []).map((meta) => {
+            const name = meta.name && meta.name.trim() ? meta.name : `Animation ${meta.index + 1}`;
+            const duration = Number.isFinite(meta.duration) && meta.duration > 0 ? meta.duration : 0.001;
+            const clip = new AnimationClip(name, duration, []);
+            (clip as AnimationClip & { userData?: { __meshscopeLazyGlbAnimation?: LazyGlbAnimationSource } }).userData = {
+                __meshscopeLazyGlbAnimation: {
+                    type: 'large-glb-animation',
+                    path,
+                    index: meta.index,
+                    name,
+                    duration,
+                    tracks: meta.tracks,
+                },
+            };
+            return clip;
+        });
+        if (lazyAnimations.length > 0) {
+            model.userData.animations = lazyAnimations;
+        }
         model.userData.__meshscopeLoadNotice = {
             type: 'large-glb-preview',
             originalBytes: preview.originalBytes ?? 0,
             previewBytes: preview.previewBytes ?? 0,
             animationsRemoved: preview.animationsRemoved ?? 0,
+            animationsAvailable: lazyAnimations.length,
         };
         return model;
     }
     return loadGLTF(await readNativeBinaryFile(path), new Map());
+}
+
+export async function loadGLBAnimationClipFromPath(path: string, animationIndex: number): Promise<AnimationClip> {
+    const result = await fs.createGlbAnimationClip(path, animationIndex);
+    if (!result.url) throw new Error('动画抽取失败');
+    const model = await loadGLTF(await readNativeBinaryUrl(result.url), new Map());
+    const clips = getAttachedAnimations(model);
+    const clip = clips[0];
+    if (!clip) throw new Error('动画解析失败');
+    return clip;
 }
 
 async function readNativeBinaryFile(path: string): Promise<ArrayBuffer> {
@@ -268,6 +306,13 @@ function attachAnimationsTo(target: Object3D, animations: AnimationClip[] | unde
     if (!animations || animations.length === 0) return;
     target.userData = target.userData ?? {};
     target.userData.animations = animations;
+}
+
+function getAttachedAnimations(target: Object3D): AnimationClip[] {
+    const value = target.userData?.animations;
+    return Array.isArray(value)
+        ? value.filter((item): item is AnimationClip => Boolean(item && (item as AnimationClip).tracks))
+        : [];
 }
 
 function defaultMaterial(): MeshStandardMaterial {

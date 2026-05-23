@@ -1,6 +1,13 @@
 // 强强 API 精简封装 — 只暴露本应用用到的命令
 import { invoke, on } from './ipc';
 
+export type GlbAnimationMeta = {
+    index: number;
+    name: string;
+    duration: number;
+    tracks: number;
+};
+
 export const win = {
     setTitle:       (title: string) => invoke<boolean>('window.setTitle', { title }),
     minimize:       () => invoke<boolean>('window.minimize'),
@@ -35,11 +42,28 @@ export const fs = {
             originalBytes?: number;
             previewBytes?: number;
             animationsRemoved?: number;
+            animations?: GlbAnimationMeta[];
             accessorsKept?: number;
             bufferViewsKept?: number;
         }>('fs.createGlbPreview', {
             path,
             minBytes,
+            protocol: typeof window !== 'undefined' ? window.location.protocol : 'http:',
+        }),
+    createGlbAnimationClip: (path: string, animationIndex: number) =>
+        invoke<{
+            used: boolean;
+            url?: string;
+            path?: string;
+            originalBytes?: number;
+            previewBytes?: number;
+            animationIndex?: number;
+            animations?: GlbAnimationMeta[];
+            accessorsKept?: number;
+            bufferViewsKept?: number;
+        }>('fs.createGlbAnimationClip', {
+            path,
+            animationIndex,
             protocol: typeof window !== 'undefined' ? window.location.protocol : 'http:',
         }),
     localFileUrl:   (path: string) => invoke<string>('fs.localFileUrl', {

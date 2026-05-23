@@ -649,6 +649,97 @@ static void collect_mesh_accessor_refs(const json& doc, std::set<int>& usedAcces
     }
 }
 
+static json collect_glb_animation_metas(const json& doc) {
+    json result = json::array();
+    if (!doc.contains("animations") || !doc["animations"].is_array()) return result;
+
+    const json emptyArray = json::array();
+    const auto& accessors = doc.contains("accessors") && doc["accessors"].is_array()
+        ? doc["accessors"]
+        : emptyArray;
+
+    int index = 0;
+    for (const auto& animation : doc["animations"]) {
+        double duration = 0.0;
+        const auto name = animation.value("name", std::string{});
+        const int tracks = animation.contains("channels") && animation["channels"].is_array()
+            ? static_cast<int>(animation["channels"].size())
+            : 0;
+
+        if (animation.contains("samplers") && animation["samplers"].is_array()) {
+            for (const auto& sampler : animation["samplers"]) {
+                if (!sampler.contains("input") || !sampler["input"].is_number_integer()) continue;
+                const int accessorIndex = sampler["input"].get<int>();
+                if (accessorIndex < 0 || accessorIndex >= static_cast<int>(accessors.size())) continue;
+                const auto& accessor = accessors[accessorIndex];
+                if (!accessor.contains("max") || !accessor["max"].is_array() || accessor["max"].empty()) continue;
+                if (accessor["max"][0].is_number()) {
+                    duration = std::max(duration, accessor["max"][0].get<double>());
+                }
+            }
+        }
+
+        result.push_back({
+            {"index", index},
+            {"name", name.empty() ? ("Animation " + std::to_string(index + 1)) : name},
+            {"duration", duration},
+            {"tracks", tracks}
+        });
+        ++index;
+    }
+    return result;
+}
+
+static void collect_animation_accessor_refs(
+    const json& animation,
+    const json& accessors,
+    const json& bufferViews,
+    std::set<int>& usedAccessors,
+    std::set<int>& usedBufferViews
+) {
+    if (animation.contains("samplers") && animation["samplers"].is_array()) {
+        for (const auto& sampler : animation["samplers"]) {
+            if (sampler.contains("input") && sampler["input"].is_number_integer()) {
+                add_json_index(accessors, sampler["input"].get<int>(), usedAccessors);
+            }
+            if (sampler.contains("output") && sampler["output"].is_number_integer()) {
+                add_json_index(accessors, sampler["output"].get<int>(), usedAccessors);
+            }
+        }
+    }
+
+    if (animation.contains("extensions")) {
+        collect_accessor_refs_recursive(animation["extensions"], accessors, bufferViews, usedAccessors, usedBufferViews);
+    }
+    if (animation.contains("extras")) {
+        collect_accessor_refs_recursive(animation["extras"], accessors, bufferViews, usedAccessors, usedBufferViews);
+    }
+}
+
+static void collect_buffer_views_for_accessors(
+    const json& accessors,
+    const json& bufferViews,
+    const std::set<int>& usedAccessors,
+    std::set<int>& usedBufferViews
+) {
+    for (const int accessorIndex : usedAccessors) {
+        if (accessorIndex < 0 || accessorIndex >= static_cast<int>(accessors.size())) continue;
+        const auto& accessor = accessors[accessorIndex];
+        if (accessor.contains("bufferView") && accessor["bufferView"].is_number_integer()) {
+            add_json_index(bufferViews, accessor["bufferView"].get<int>(), usedBufferViews);
+        }
+        if (accessor.contains("sparse") && accessor["sparse"].is_object()) {
+            const auto& sparse = accessor["sparse"];
+            if (sparse.contains("indices") && sparse["indices"].contains("bufferView")) {
+                add_json_index(bufferViews, sparse["indices"]["bufferView"].get<int>(), usedBufferViews);
+            }
+            if (sparse.contains("values") && sparse["values"].contains("bufferView")) {
+                add_json_index(bufferViews, sparse["values"]["bufferView"].get<int>(), usedBufferViews);
+            }
+        }
+    }
+}
+
 static int mapped_index(const std::vector<int>& map, int index) {
     return index >= 0 && index < static_cast<int>(map.size()) ? map[index] : -1;
 }
@@ -717,6 +808,31 @@ static void remap_mesh_accessor_refs(json& doc, const std::vector<int>& accessor
     }
 }
 
+static void remap_animation_accessor_refs(
+    json& animation,
+    const std::vector<int>& accessorMap,
+    const std::vector<int>& bufferViewMap
+) {
+    if (animation.contains("samplers") && animation["samplers"].is_array()) {
+        for (auto& sampler : animation["samplers"]) {
+            if (sampler.contains("input") && sampler["input"].is_number_integer()) {
+                const int mapped = mapped_index(accessorMap, sampler["input"].get<int>());
+                if (mapped >= 0) sampler["input"] = mapped;
+            }
+            if (sampler.contains("output") && sampler["output"].is_number_integer()) {
+                const int mapped = mapped_index(accessorMap, sampler["output"].get<int>());
+                if (mapped >= 0) sampler["output"] = mapped;
+            }
+        }
+    }
+    if (animation.contains("extensions")) {
+        remap_direct_refs_recursive(animation["extensions"], accessorMap, bufferViewMap);
+    }
+    if (animation.contains("extras")) {
+        remap_direct_refs_recursive(animation["extras"], accessorMap, bufferViewMap);
+    }
+}
+
 static void copy_stream_range(std::ifstream& in, std::ofstream& out, uint64_t offset, uint64_t length) {
     constexpr size_t kChunk = 1024 * 1024;
     std::vector<char> buffer(kChunk);
@@ -732,7 +848,12 @@ static void copy_stream_range(std::ifstream& in, std::ofstream& out, uint64_t of
     }
 }
 
-static json create_glb_preview_file(const std::wstring& sourcePath, const std::string& protocol, uint64_t minBytes) {
+static json create_glb_preview_file(
+    const std::wstring& sourcePath,
+    const std::string& protocol,
+    uint64_t minBytes,
+    int animationIndex = -1
+) {
     std::ifstream in(sourcePath, std::ios::binary);
     if (!in) throw std::runtime_error("Cannot open GLB");
 
@@ -775,17 +896,38 @@ static json create_glb_preview_file(const std::wstring& sourcePath, const std::s
     }
 
     json doc = json::parse(jsonText);
+    const json animationMetas = collect_glb_animation_metas(doc);
     const int animationCount = doc.contains("animations") && doc["animations"].is_array()
         ? static_cast<int>(doc["animations"].size())
         : 0;
     if (animationCount <= 0) {
         return {{"used", false}, {"reason", "no-animations"}, {"originalBytes", totalLength}};
     }
+    if (animationIndex >= animationCount) {
+        throw std::runtime_error("Animation index out of range");
+    }
 
-    doc.erase("animations");
+    if (animationIndex >= 0) {
+        doc["animations"] = json::array({doc["animations"][animationIndex]});
+    } else {
+        doc.erase("animations");
+    }
+
+    const json emptyArray = json::array();
+    const auto& oldAccessors = doc.contains("accessors") && doc["accessors"].is_array()
+        ? doc["accessors"]
+        : emptyArray;
+    const auto& oldBufferViews = doc.contains("bufferViews") && doc["bufferViews"].is_array()
+        ? doc["bufferViews"]
+        : emptyArray;
+
     std::set<int> usedAccessors;
     std::set<int> usedBufferViews;
     collect_mesh_accessor_refs(doc, usedAccessors, usedBufferViews);
+    if (animationIndex >= 0 && doc.contains("animations") && doc["animations"].is_array() && !doc["animations"].empty()) {
+        collect_animation_accessor_refs(doc["animations"][0], oldAccessors, oldBufferViews, usedAccessors, usedBufferViews);
+        collect_buffer_views_for_accessors(oldAccessors, oldBufferViews, usedAccessors, usedBufferViews);
+    }
     if (usedBufferViews.empty()) {
         return {{"used", false}, {"reason", "no-bufferViews"}, {"originalBytes", totalLength}};
     }
@@ -795,14 +937,6 @@ static json create_glb_preview_file(const std::wstring& sourcePath, const std::s
     fspath::create_directories(cacheDir);
     const std::wstring previewPath = cacheDir + L"\\" + U2W(token) + L".glb";
     const std::wstring tempBinPath = cacheDir + L"\\" + U2W(token) + L".bin";
-
-    const json emptyArray = json::array();
-    const auto& oldAccessors = doc.contains("accessors") && doc["accessors"].is_array()
-        ? doc["accessors"]
-        : emptyArray;
-    const auto& oldBufferViews = doc.contains("bufferViews") && doc["bufferViews"].is_array()
-        ? doc["bufferViews"]
-        : emptyArray;
 
     std::vector<int> accessorMap(oldAccessors.size(), -1);
     std::vector<int> bufferViewMap(oldBufferViews.size(), -1);
@@ -862,6 +996,9 @@ static json create_glb_preview_file(const std::wstring& sourcePath, const std::s
 
     remap_direct_refs_recursive(doc, accessorMap, bufferViewMap);
     remap_mesh_accessor_refs(doc, accessorMap);
+    if (animationIndex >= 0 && doc.contains("animations") && doc["animations"].is_array() && !doc["animations"].empty()) {
+        remap_animation_accessor_refs(doc["animations"][0], accessorMap, bufferViewMap);
+    }
     doc["accessors"] = newAccessors;
     doc["bufferViews"] = newBufferViews;
     doc["buffers"] = json::array({{{"byteLength", compactBinLength}}});
@@ -904,7 +1041,9 @@ static json create_glb_preview_file(const std::wstring& sourcePath, const std::s
         {"path", W2U(previewPath)},
         {"originalBytes", totalLength},
         {"previewBytes", previewLength},
-        {"animationsRemoved", animationCount},
+        {"animationIndex", animationIndex},
+        {"animationsRemoved", animationIndex >= 0 ? 0 : animationCount},
+        {"animations", animationMetas},
         {"accessorsKept", newAccessors.size()},
         {"bufferViewsKept", newBufferViews.size()}
     };
@@ -1403,6 +1542,14 @@ static void reg_fs() {
         const auto protocol = a.value("protocol", std::string{"http:"});
         const uint64_t minBytes = a.value("minBytes", static_cast<uint64_t>(512ull * 1024ull * 1024ull));
         return create_glb_preview_file(path, protocol, minBytes);
+    });
+    ipc_on("fs.createGlbAnimationClip", [](const json& a) -> json {
+        auto path = U2W(a.value("path", std::string{}));
+        if (path.empty()) throw std::runtime_error("Missing path");
+        const auto protocol = a.value("protocol", std::string{"http:"});
+        const int animationIndex = a.value("animationIndex", -1);
+        if (animationIndex < 0) throw std::runtime_error("Missing animation index");
+        return create_glb_preview_file(path, protocol, 0, animationIndex);
     });
     ipc_on("fs.localFileUrl", [](const json& a) -> json {
         auto path = U2W(a.value("path", std::string{}));

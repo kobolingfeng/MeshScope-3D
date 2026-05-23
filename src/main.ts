@@ -17,7 +17,7 @@ import {
     type UvEditorState,
     Viewer,
 } from './viewer';
-import { ACCEPT_EXTS, extOf, isSupported, loadFromFiles, loadFromPath } from './loaders';
+import { ACCEPT_EXTS, extOf, isSupported, loadFromFiles, loadFromPath, loadGLBAnimationClipFromPath } from './loaders';
 import { app, dialog, fs, win } from './api';
 import { inNative } from './ipc';
 import { extractModelPathsFromUrls } from './launch';
@@ -345,6 +345,7 @@ let animTimeRangeSyncing = false;
 let selectedAnimationTrackIndex = -1;
 let selectedKeyframeTimes: number[] = [];
 let animationClipboard: AnimationClipSnapshot | null = null;
+const lazyAnimationLoads = new Map<string, Promise<boolean>>();
 let lastScrolledBoneIndex = -1;
 let timelineZoom = 1;
 let timelineSnapEnabled = true;
@@ -1274,7 +1275,7 @@ function setupUndoShortcuts(): void {
 
 function setupAnimationControls(): void {
     animPlayBtn.addEventListener('click', () => {
-        viewer.toggleAnimation();
+        void toggleAnimationWithLazyLoad();
     });
 
     animStopBtn.addEventListener('click', () => {
@@ -1294,8 +1295,15 @@ function setupAnimationControls(): void {
             const item = action.closest<HTMLElement>('[data-clip-index]');
             const index = Number(item?.dataset.clipIndex);
             if (!Number.isFinite(index)) return;
-            if (action.dataset.action === 'copy-keyframes') copyClipKeyframesAt(index);
-            else if (action.dataset.action === 'duplicate') duplicateClipAt(index);
+            if (action.dataset.action === 'copy-keyframes') {
+                void ensureAnimationClipLoaded(index, { autoPlay: false }).then((loaded) => {
+                    if (loaded) copyClipKeyframesAt(index);
+                });
+            } else if (action.dataset.action === 'duplicate') {
+                void ensureAnimationClipLoaded(index, { autoPlay: false }).then((loaded) => {
+                    if (loaded) duplicateClipAt(index);
+                });
+            }
             else if (action.dataset.action === 'delete') deleteClipAt(index);
             return;
         }
@@ -1306,7 +1314,7 @@ function setupAnimationControls(): void {
         if (!Number.isFinite(index)) return;
         const wasPlaying = viewer.getAnimationState().playing;
         selectedKeyframeTimes = [];
-        viewer.selectAnimationClip(index, { autoPlay: wasPlaying });
+        void activateAnimationClip(index, wasPlaying);
     });
 
     btnNewTposeClip.addEventListener('click', () => {
@@ -1521,7 +1529,7 @@ function setupAnimationControls(): void {
         if (isEditableTarget(event.target)) return;
         if (!viewer.getAnimationState().hasAnimations) return;
         event.preventDefault();
-        viewer.toggleAnimation();
+        void toggleAnimationWithLazyLoad();
     });
 
     refreshAnimationBar(viewer.getAnimationState());
@@ -1578,10 +1586,13 @@ function renderAnimationClipList(state: AnimationPlaybackState): void {
             const active = clip.index === state.activeIndex;
             const selected = active ? ' aria-selected="true"' : ' aria-selected="false"';
             const className = `anim-clip-item${active ? ' active' : ''}`;
+            const meta = clip.lazy
+                ? `${clip.duration.toFixed(2)}s · ${clip.tracks} · 按需`
+                : `${clip.duration.toFixed(2)}s · ${clip.tracks}`;
             return `
                 <button class="${className}" type="button" role="option" data-clip-index="${clip.index}"${selected}>
                     <span class="anim-clip-name">${escapeHtml(clip.name)}</span>
-                    <span class="anim-clip-meta">${clip.duration.toFixed(2)}s · ${clip.tracks}</span>
+                    <span class="anim-clip-meta">${escapeHtml(meta)}</span>
                     <span class="anim-clip-actions" aria-hidden="true">
                         <span class="anim-clip-action" role="button" tabindex="0" data-action="copy-keyframes" title="复制关键帧">
                             <svg viewBox="0 0 24 24"><path d="M9 4h6l1 2h3v14H5V6h3z"/><path d="M9 11h6M9 15h5"/></svg>
@@ -1604,6 +1615,68 @@ function syncAnimationClipTools(state: AnimationPlaybackState): void {
     btnNewTposeClip.disabled = !hasSkeleton;
     btnCopyClipKeys.disabled = !state.hasAnimations || state.activeIndex < 0;
     btnPasteClipKeys.disabled = !animationClipboard;
+}
+
+async function toggleAnimationWithLazyLoad(): Promise<void> {
+    const state = viewer.getAnimationState();
+    if (!state.hasAnimations) return;
+    const index = state.activeIndex >= 0 ? state.activeIndex : 0;
+    if (viewer.getLazyAnimationClipSource(index)) {
+        await ensureAnimationClipLoaded(index, { autoPlay: true });
+        return;
+    }
+    viewer.toggleAnimation();
+}
+
+async function activateAnimationClip(index: number, autoPlay: boolean): Promise<void> {
+    if (!Number.isFinite(index)) return;
+    if (viewer.getLazyAnimationClipSource(index)) {
+        await ensureAnimationClipLoaded(index, { autoPlay });
+        return;
+    }
+    viewer.selectAnimationClip(index, { autoPlay });
+}
+
+async function ensureAnimationClipLoaded(index: number, opts: { autoPlay?: boolean } = {}): Promise<boolean> {
+    const source = viewer.getLazyAnimationClipSource(index);
+    if (!source) return true;
+
+    const key = `${source.path}\0${source.index}`;
+    const existing = lazyAnimationLoads.get(key);
+    if (existing) return existing;
+
+    const task = (async () => {
+        const label = source.name || `Animation ${source.index + 1}`;
+        showLoading(`正在载入动画 ${label} …`);
+        try {
+            const clip = await loadGLBAnimationClipFromPath(source.path, source.index);
+            if (!clip.name || !clip.name.trim()) clip.name = label;
+            const replaced = viewer.replaceAnimationClip(index, clip, {
+                activate: true,
+                autoPlay: opts.autoPlay ?? false,
+            });
+            if (!replaced) {
+                showToast('动画载入后绑定失败', 'error');
+                return false;
+            }
+            selectedKeyframeTimes = [];
+            refreshAnimationBar(viewer.getAnimationState());
+            syncAnimationEditor();
+            showToast(`已载入动画 ${label}`, 'success');
+            return true;
+        } catch (error) {
+            console.error(error);
+            const message = error instanceof Error ? error.message : String(error);
+            showToast(`动画载入失败: ${message}`, 'error');
+            return false;
+        } finally {
+            hideLoading();
+            lazyAnimationLoads.delete(key);
+        }
+    })();
+
+    lazyAnimationLoads.set(key, task);
+    return task;
 }
 
 function createRestPoseClip(): void {
@@ -4217,10 +4290,11 @@ function showModelLoadNotice(model: Object3D): void {
         originalBytes?: number;
         previewBytes?: number;
         animationsRemoved?: number;
+        animationsAvailable?: number;
     } | undefined;
     if (notice?.type !== 'large-glb-preview') return;
     showToast(
-        `超大 GLB 已快速预览：${formatBytes(notice.originalBytes ?? 0)} -> ${formatBytes(notice.previewBytes ?? 0)}，暂跳过 ${notice.animationsRemoved ?? 0} 个动画`,
+        `超大 GLB 已快速预览：${formatBytes(notice.originalBytes ?? 0)} -> ${formatBytes(notice.previewBytes ?? 0)}，${notice.animationsAvailable ?? 0} 个动画将按需载入`,
         'info',
     );
 }
