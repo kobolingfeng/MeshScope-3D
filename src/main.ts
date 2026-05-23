@@ -448,9 +448,11 @@ const uvWheelUndoDraft: {
 
 const animationPoseUndoDraft: {
     snapshot: BonePoseSnapshot | null;
+    animationSnapshot: AnimationClipSnapshot | null;
     label: string;
 } = {
     snapshot: null,
+    animationSnapshot: null,
     label: '',
 };
 
@@ -3547,6 +3549,7 @@ function resetUndoDrafts(): void {
     uvWheelUndoDraft.selection = null;
     uvWheelUndoDraft.label = '';
     animationPoseUndoDraft.snapshot = null;
+    animationPoseUndoDraft.animationSnapshot = null;
     animationPoseUndoDraft.label = '';
     refreshButtons();
 }
@@ -3691,14 +3694,32 @@ function beginBonePoseUndoTransaction(): void {
     const snapshot = viewer.captureBonePoseSnapshot();
     if (!snapshot) return;
     animationPoseUndoDraft.snapshot = snapshot;
+    animationPoseUndoDraft.animationSnapshot = viewer.captureAnimationSnapshot();
     animationPoseUndoDraft.label = getBonePoseEditLabel();
     refreshButtons();
 }
 
 function commitBonePoseUndoTransaction(): void {
     if (!animationPoseUndoDraft.snapshot) return;
-    commitBonePoseUndo(animationPoseUndoDraft.snapshot, animationPoseUndoDraft.label || '骨骼姿态');
+    const label = animationPoseUndoDraft.label || '骨骼姿态';
+    const animationSnapshot = animationPoseUndoDraft.animationSnapshot;
+    const currentAnimation = viewer.captureAnimationSnapshot();
+    let committedAnimationUndo = false;
+    if (animationSnapshot && currentAnimation && !areAnimationSnapshotsEqual(animationSnapshot, currentAnimation)) {
+        pushUndoEntry({
+            kind: 'animation',
+            label,
+            snapshot: animationSnapshot,
+        });
+        committedAnimationUndo = true;
+    } else if (!animationSnapshot && currentAnimation) {
+        markActiveDocumentDirty();
+    }
+    if (!committedAnimationUndo) {
+        commitBonePoseUndo(animationPoseUndoDraft.snapshot, label);
+    }
     animationPoseUndoDraft.snapshot = null;
+    animationPoseUndoDraft.animationSnapshot = null;
     animationPoseUndoDraft.label = '';
     refreshButtons();
 }

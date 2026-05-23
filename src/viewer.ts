@@ -351,6 +351,7 @@ export class Viewer {
     private transformControls: TransformControls;
     private boneTransformMode: BoneTransformMode = 'rotate';
     private transformDragging = false;
+    private transformChangedDuringDrag = false;
     private ikEnabled = false;
     private ikTarget: Object3D | null = null;
     private ikTargetMesh: Mesh | null = null;
@@ -426,13 +427,17 @@ export class Viewer {
             this.transformDragging = dragging;
             this.controls.enabled = !dragging;
             if (dragging) {
+                this.transformChangedDuringDrag = false;
                 this.pauseAnimation();
                 this.onBonePoseEditStarted();
             } else {
+                if (this.transformChangedDuringDrag) this.autoKeyframeCurrentBonePose();
+                this.transformChangedDuringDrag = false;
                 this.onBonePoseEdited();
             }
         });
         this.transformControls.addEventListener('objectChange', () => {
+            if (this.transformDragging) this.transformChangedDuringDrag = true;
             if (this.ikEnabled) this.solveIk();
             this.updateSkeletonOverlay();
             this.onSkeletonChanged(this.getSkeletonEditorState());
@@ -1260,24 +1265,33 @@ export class Viewer {
     }
 
     insertSelectedBoneKeyframe(): void {
-        const clip = this.ensureActiveAnimationClip();
-        if (!clip || !this.selectedBone) return;
+        this.autoKeyframeCurrentBonePose();
+    }
 
-        const time = this.activeAction?.time ?? 0;
+    autoKeyframeCurrentBonePose(): boolean {
+        const clip = this.ensureActiveAnimationClip();
+        if (!clip || !this.selectedBone) return false;
+
         const targets = this.ikEnabled && this.ikChain.length > 0
             ? [...new Set([this.selectedBone, ...this.ikChain])]
             : [this.selectedBone];
+        return this.autoKeyframeBonePoseTargets(clip, targets);
+    }
 
+    private autoKeyframeBonePoseTargets(clip: AnimationClip, targets: Bone[]): boolean {
+        if (targets.length === 0) return false;
+        const time = this.activeAction?.time ?? 0;
         for (const bone of targets) {
             upsertBoneKeyframe(clip, bone, 'position', time);
             upsertBoneKeyframe(clip, bone, 'quaternion', time);
             upsertBoneKeyframe(clip, bone, 'scale', time);
         }
 
-        clip.duration = Math.max(clip.duration, time);
+        clip.duration = Math.max(clip.duration, time, 0.001);
         this.refreshAnimationClipMetas();
         this.refreshActiveAnimationAfterEdit(this.activeClipIndex);
         this.onSkeletonChanged(this.getSkeletonEditorState());
+        return true;
     }
 
     deleteSelectedBoneKeyframe(): void {
@@ -1519,6 +1533,13 @@ export class Viewer {
         bone.updateMatrixWorld(true);
         if (this.ikEnabled && bone === this.selectedBone) this.solveIk();
         this.updateSkeletonOverlay();
+        const clip = this.ensureActiveAnimationClip();
+        if (clip) {
+            const targets = this.ikEnabled && bone === this.selectedBone && this.ikChain.length > 0
+                ? [...new Set([bone, ...this.ikChain])]
+                : [bone];
+            this.autoKeyframeBonePoseTargets(clip, targets);
+        }
         this.onSkeletonChanged(this.getSkeletonEditorState());
         return true;
     }
@@ -1541,6 +1562,7 @@ export class Viewer {
         bone.updateMatrixWorld(true);
         if (this.ikEnabled) this.solveIk();
         this.updateSkeletonOverlay();
+        this.autoKeyframeCurrentBonePose();
         this.onSkeletonChanged(this.getSkeletonEditorState());
         return true;
     }
