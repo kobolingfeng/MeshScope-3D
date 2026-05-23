@@ -178,6 +178,24 @@
                                 <span class="anim-summary" id="anim-summary"></span>
                             </div>
                             <div class="anim-timeline-panel">
+                                <div class="anim-timeline-tools">
+                                    <span class="anim-keyframe-selection" id="anim-keyframe-selection">0 关键帧</span>
+                                    <button class="mini-btn" id="btn-timeline-select-all" type="button">全选</button>
+                                    <button class="mini-btn" id="btn-timeline-clear-selection" type="button">清选</button>
+                                    <label class="anim-toggle" title="吸附到帧">
+                                        <input type="checkbox" id="anim-timeline-snap" checked>
+                                        <span>吸附</span>
+                                    </label>
+                                    <label class="anim-speed">
+                                        <span>FPS</span>
+                                        <input id="anim-timeline-fps" type="number" min="1" max="240" step="1" value="30">
+                                    </label>
+                                    <label class="anim-zoom">
+                                        <span>缩放</span>
+                                        <input id="anim-timeline-zoom" type="range" min="0.5" max="4" step="0.05" value="1">
+                                        <span id="anim-timeline-zoom-label">100%</span>
+                                    </label>
+                                </div>
                                 <div class="anim-timeline-scroll" id="anim-timeline-scroll">
                                     <div class="animation-keyframe-strip animation-keyframe-strip-wide" id="anim-keyframe-strip" role="slider" aria-label="动画关键帧时间轴"></div>
                                 </div>

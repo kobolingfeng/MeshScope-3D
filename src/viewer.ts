@@ -1252,6 +1252,31 @@ export class Viewer {
         }
     }
 
+    moveSelectedBoneKeyframesAtTimes(fromTimes: number[], toTimes: number[]): void {
+        const clip = this.animClips[this.activeClipIndex];
+        if (!clip || !this.selectedBone || fromTimes.length === 0 || toTimes.length === 0) return;
+
+        const moves = fromTimes
+            .map((from, index) => ({ from, to: toTimes[index] ?? from }))
+            .filter((move) => Number.isFinite(move.from) && Number.isFinite(move.to) && !nearlyEqualTime(move.from, move.to));
+        if (moves.length === 0) return;
+
+        let changed = false;
+        clip.tracks = clip.tracks.map((track) => {
+            const nextTrack = moveKeyframesNearTimes(track, this.selectedBone!, moves);
+            if (nextTrack !== track) changed = true;
+            return nextTrack;
+        });
+
+        if (changed) {
+            const maxMovedTime = moves.reduce((max, move) => Math.max(max, move.to), clip.duration);
+            clip.duration = Math.max(clip.duration, maxMovedTime);
+            this.refreshAnimationClipMetas();
+            this.refreshActiveAnimationAfterEdit(this.activeClipIndex);
+            this.onSkeletonChanged(this.getSkeletonEditorState());
+        }
+    }
+
     getAnimationClipsForExport(): AnimationClip[] {
         return [...this.animClips];
     }
@@ -1957,6 +1982,59 @@ function removeKeyframeNearTime(track: KeyframeTrack, bone: Bone, time: number):
     values.splice(removeIndex * valueSize, valueSize);
     if (times.length === 0) return null;
     return cloneTrackWithData(track, times, values);
+}
+
+function moveKeyframesNearTimes(
+    track: KeyframeTrack,
+    bone: Bone,
+    moves: Array<{ from: number; to: number }>,
+): KeyframeTrack {
+    const property = parseAnimationTrackName(track.name).property;
+    if (property !== 'position' && property !== 'quaternion' && property !== 'scale') return track;
+    if (!trackTargetsBoneProperty(track, bone, property)) return track;
+
+    const valueSize = track.getValueSize();
+    const trackValues = Array.from(track.values as ArrayLike<number>);
+    const rows = Array.from(track.times as ArrayLike<number>).map((time, index) => ({
+        time,
+        values: trackValues.slice(index * valueSize, index * valueSize + valueSize),
+        moved: false,
+    }));
+    let changed = false;
+
+    for (const move of moves) {
+        let moveIndex = -1;
+        let bestDistance = Number.POSITIVE_INFINITY;
+        for (let index = 0; index < rows.length; index += 1) {
+            if (rows[index].moved) continue;
+            const distance = Math.abs(rows[index].time - move.from);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                moveIndex = index;
+            }
+        }
+        if (moveIndex < 0 || bestDistance > 1e-3) continue;
+        rows[moveIndex].time = Math.max(0, move.to);
+        rows[moveIndex].moved = true;
+        changed = true;
+    }
+
+    if (!changed) return track;
+
+    const merged = new Map<string, { time: number; values: number[] }>();
+    for (const row of rows) {
+        merged.set(row.time.toFixed(4), {
+            time: row.time,
+            values: row.values,
+        });
+    }
+
+    const sorted = [...merged.values()].sort((a, b) => a.time - b.time);
+    return cloneTrackWithData(
+        track,
+        sorted.map((row) => row.time),
+        sorted.flatMap((row) => row.values),
+    );
 }
 
 function cloneTrackWithData(track: KeyframeTrack, times: number[], values: number[]): KeyframeTrack {

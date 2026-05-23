@@ -1050,6 +1050,10 @@ summary:focus-visible,
     touch-action: none;
 }
 
+.animation-keyframe-strip.retiming {
+    cursor: ew-resize;
+}
+
 .animation-keyframe-strip-wide {
     width: var(--timeline-width, 960px);
     min-width: var(--timeline-width, 960px);
@@ -1809,8 +1813,62 @@ input[type="checkbox"] {
 .anim-timeline-panel {
     min-width: 0;
     display: grid;
-    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
     gap: 6px;
+}
+
+.anim-timeline-tools {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: thin;
+}
+
+.anim-keyframe-selection {
+    flex: 0 0 auto;
+    padding: 4px 8px;
+    border: 1px solid rgba(47, 111, 179, 0.22);
+    border-radius: 7px;
+    background: rgba(47, 111, 179, 0.07);
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+    font-weight: 700;
+}
+
+.anim-timeline-tools .mini-btn {
+    flex: 0 0 auto;
+    min-height: 26px;
+    padding: 0 8px;
+    font-size: 11px;
+}
+
+.anim-zoom {
+    flex: 0 0 auto;
+    min-height: 28px;
+    display: grid;
+    grid-template-columns: auto 90px 38px;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border: 1px solid var(--line-base);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.7);
+    color: var(--text-1);
+}
+
+.anim-zoom input[type="range"] {
+    width: 90px;
+    accent-color: var(--accent);
+}
+
+.anim-zoom span:last-child {
+    color: var(--text-2);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
 }
 
 .anim-timeline-scroll {

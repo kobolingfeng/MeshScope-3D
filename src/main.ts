@@ -256,6 +256,13 @@ const btnDeleteKeyframe = $<HTMLButtonElement>('btn-delete-keyframe');
 const btnAnimHistoryUndo = $<HTMLButtonElement>('btn-anim-history-undo');
 const btnAnimHistoryRedo = $<HTMLButtonElement>('btn-anim-history-redo');
 const animHistoryList = $('anim-history-list');
+const animKeyframeSelection = $('anim-keyframe-selection');
+const btnTimelineSelectAll = $<HTMLButtonElement>('btn-timeline-select-all');
+const btnTimelineClearSelection = $<HTMLButtonElement>('btn-timeline-clear-selection');
+const animTimelineSnapInput = $<HTMLInputElement>('anim-timeline-snap');
+const animTimelineFpsInput = $<HTMLInputElement>('anim-timeline-fps');
+const animTimelineZoomInput = $<HTMLInputElement>('anim-timeline-zoom');
+const animTimelineZoomLabel = $('anim-timeline-zoom-label');
 const animClipNameInput = $<HTMLInputElement>('anim-clip-name');
 const animClipDuration = $('anim-clip-duration');
 const animTrackCount = $('anim-track-count');
@@ -285,19 +292,29 @@ const modelNameEls = [toolbarModelName, modelName];
 let animTimeRangeSyncing = false;
 let selectedAnimationTrackIndex = -1;
 let selectedKeyframeTimes: number[] = [];
+let timelineZoom = 1;
+let timelineSnapEnabled = true;
+let timelineFps = 30;
+let timelineRetimePreviewDelta = 0;
 
 const timelineDragState: {
     active: boolean;
+    mode: 'idle' | 'box-select' | 'retime';
     pointerId: number | null;
     startClientX: number;
     currentClientX: number;
     moved: boolean;
+    markerTime: number;
+    startTimes: number[];
 } = {
     active: false,
+    mode: 'idle',
     pointerId: null,
     startClientX: 0,
     currentClientX: 0,
     moved: false,
+    markerTime: 0,
+    startTimes: [],
 };
 
 const viewer = new Viewer(canvas);
@@ -461,7 +478,7 @@ viewer.onBonePoseEdited = () => {
 
 viewer.onAnimationTick = (state) => {
     syncAnimationProgress(state);
-    renderAnimationTimeline(viewer.getSkeletonEditorState(), state);
+    updateTimelinePlayhead(state);
 };
 
 applyLayout();
@@ -939,6 +956,37 @@ function setupAnimationControls(): void {
         redoLastEdit();
     });
 
+    btnTimelineSelectAll.addEventListener('click', () => {
+        const markers = viewer.getSkeletonEditorState().keyframes;
+        const scoped = markers.filter((marker) => marker.selectedBone);
+        setSelectedKeyframeTimes((scoped.length > 0 ? scoped : markers).map((marker) => marker.time));
+        renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+    });
+
+    btnTimelineClearSelection.addEventListener('click', () => {
+        selectedKeyframeTimes = [];
+        renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+    });
+
+    animTimelineSnapInput.addEventListener('change', () => {
+        timelineSnapEnabled = animTimelineSnapInput.checked;
+        renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+    });
+
+    animTimelineFpsInput.addEventListener('change', () => {
+        const value = Number(animTimelineFpsInput.value);
+        timelineFps = Number.isFinite(value) ? Math.round(clamp(value, 1, 240)) : 30;
+        animTimelineFpsInput.value = String(timelineFps);
+        syncAnimationProgress(viewer.getAnimationState());
+        renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+    });
+
+    animTimelineZoomInput.addEventListener('input', () => {
+        const value = Number(animTimelineZoomInput.value);
+        timelineZoom = Number.isFinite(value) ? clamp(value, 0.5, 4) : 1;
+        renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+    });
+
     animKeyframeStrip.addEventListener('click', handleTimelineClick);
     animKeyframeStrip.addEventListener('pointerdown', handleTimelinePointerDown);
     animKeyframeStrip.addEventListener('pointermove', handleTimelinePointerMove);
@@ -978,7 +1026,7 @@ function setupAnimationControls(): void {
 
     animTimeRange.addEventListener('input', () => {
         if (animTimeRangeSyncing) return;
-        const time = parseFloat(animTimeRange.value);
+        const time = snapTimelineTime(parseFloat(animTimeRange.value), viewer.getAnimationState().duration);
         if (!Number.isFinite(time)) return;
         viewer.seekAnimation(time);
     });
@@ -1085,7 +1133,9 @@ function syncAnimationProgress(state: AnimationPlaybackState): void {
 
     animTimeRangeSyncing = true;
     animTimeRange.max = duration > 0 ? String(duration) : '0';
-    animTimeRange.step = duration > 0 ? String(Math.max(duration / 1000, 0.001)) : '0.001';
+    animTimeRange.step = duration > 0
+        ? String(timelineSnapEnabled ? 1 / timelineFps : Math.max(duration / 1000, 0.001))
+        : '0.001';
     animTimeRange.value = duration > 0 ? String(time) : '0';
     animTimeRangeSyncing = false;
 
@@ -1202,19 +1252,21 @@ function renderAnimationTimeline(
     playbackState: AnimationPlaybackState,
 ): void {
     const duration = playbackState.duration;
-    const playhead = duration > 0 ? clamp((playbackState.time / duration) * 100, 0, 100) : 0;
     const width = getTimelineContentWidth(duration);
-    animKeyframeStrip.style.setProperty('--playhead', `${playhead}%`);
     animKeyframeStrip.style.setProperty('--timeline-width', `${width}px`);
+    updateTimelinePlayhead(playbackState);
+    updateTimelineSelectionSummary();
     if (duration <= 0) {
         animKeyframeStrip.innerHTML = '';
         selectedKeyframeTimes = [];
+        updateTimelineSelectionSummary();
         return;
     }
     const markerTimes = skeletonState.keyframes.map((marker) => marker.time);
     selectedKeyframeTimes = selectedKeyframeTimes.filter((time) => markerTimes.some((markerTime) => nearlyEqualTimeForUi(time, markerTime)));
+    updateTimelineSelectionSummary();
 
-    const ticks = buildTimelineTicks(duration).map((tick) => {
+    const ticks = buildTimelineTicks(duration, width).map((tick) => {
         const left = clamp((tick.time / duration) * 100, 0, 100);
         return `
             <span class="animation-time-tick ${tick.major ? 'major' : 'minor'}" style="left:${left}%">
@@ -1224,8 +1276,11 @@ function renderAnimationTimeline(
     }).join('');
 
     const markers = skeletonState.keyframes.map((marker) => {
-            const left = clamp((marker.time / duration) * 100, 0, 100);
             const selected = isKeyframeTimeSelected(marker.time);
+            const displayTime = selected
+                ? clamp(marker.time + timelineRetimePreviewDelta, 0, duration)
+                : marker.time;
+            const left = clamp((displayTime / duration) * 100, 0, 100);
             const classes = [
                 'animation-keyframe-marker',
                 marker.selectedBone ? 'selected-bone' : '',
@@ -1237,7 +1292,7 @@ function renderAnimationTimeline(
                     type="button"
                     data-keyframe-time="${marker.time}"
                     style="left:${left}%"
-                    aria-label="关键帧 ${marker.time.toFixed(3)} 秒"
+                    aria-label="关键帧 ${formatFrameTime(marker.time)}"
                     aria-pressed="${selected}"
                 ></button>
             `;
@@ -1251,14 +1306,33 @@ function renderAnimationTimeline(
     updateTimelineSelectionBox();
 }
 
-function getTimelineContentWidth(duration: number): number {
-    if (duration <= 0) return 900;
-    return Math.max(960, Math.ceil(duration * 180));
+function updateTimelinePlayhead(state: AnimationPlaybackState): void {
+    const playhead = state.duration > 0 ? clamp((state.time / state.duration) * 100, 0, 100) : 0;
+    animKeyframeStrip.style.setProperty('--playhead', `${playhead}%`);
+    updateTimelineSelectionSummary();
 }
 
-function buildTimelineTicks(duration: number): Array<{ time: number; label: string; major: boolean }> {
+function updateTimelineSelectionSummary(): void {
+    const count = selectedKeyframeTimes.length;
+    const frame = viewer.getAnimationState().duration > 0
+        ? Math.round((viewer.getAnimationState().time ?? 0) * timelineFps)
+        : 0;
+    animKeyframeSelection.textContent = count > 0
+        ? `${count} 关键帧 · F${frame}`
+        : `0 关键帧 · F${frame}`;
+    btnTimelineClearSelection.disabled = count === 0;
+    btnDeleteKeyframe.textContent = count > 0 ? `删除选中 ${count}` : '删除当前帧';
+    animTimelineZoomLabel.textContent = `${Math.round(timelineZoom * 100)}%`;
+}
+
+function getTimelineContentWidth(duration: number): number {
+    if (duration <= 0) return 1200;
+    return Math.max(1200, Math.ceil(duration * 180 * timelineZoom));
+}
+
+function buildTimelineTicks(duration: number, width: number): Array<{ time: number; label: string; major: boolean }> {
     const ticks: Array<{ time: number; label: string; major: boolean }> = [];
-    const majorStep = pickTimelineMajorStep(duration);
+    const majorStep = pickTimelineMajorStep(duration, width);
     const minorStep = majorStep / 4;
     for (let time = 0; time <= duration + minorStep * 0.5; time += minorStep) {
         const clampedTime = Math.min(time, duration);
@@ -1267,20 +1341,27 @@ function buildTimelineTicks(duration: number): Array<{ time: number; label: stri
             || nearlyEqual(clampedTime, duration);
         ticks.push({
             time: clampedTime,
-            label: `${clampedTime.toFixed(majorStep < 1 ? 1 : 0)}s`,
+            label: formatTimelineTickLabel(clampedTime, majorStep),
             major,
         });
     }
     return ticks;
 }
 
-function pickTimelineMajorStep(duration: number): number {
-    if (duration <= 2) return 0.25;
-    if (duration <= 6) return 0.5;
-    if (duration <= 16) return 1;
-    if (duration <= 40) return 2;
-    if (duration <= 90) return 5;
-    return 10;
+function pickTimelineMajorStep(duration: number, width: number): number {
+    const pxPerSecond = duration > 0 ? width / duration : 120;
+    const steps = [1 / timelineFps, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60];
+    return steps.find((step) => step * pxPerSecond >= 82) ?? 60;
+}
+
+function formatTimelineTickLabel(time: number, step: number): string {
+    if (step < 1) return `${time.toFixed(2)}s`;
+    if (timelineSnapEnabled) return `F${Math.round(time * timelineFps)}`;
+    return `${time.toFixed(0)}s`;
+}
+
+function formatFrameTime(time: number): string {
+    return `${time.toFixed(3)} 秒 / F${Math.round(time * timelineFps)}`;
 }
 
 function handleTimelineClick(event: MouseEvent): void {
@@ -1310,9 +1391,26 @@ function handleTimelineClick(event: MouseEvent): void {
 
 function handleTimelinePointerDown(event: PointerEvent): void {
     if (event.button !== 0) return;
-    if ((event.target as HTMLElement).closest('[data-keyframe-time]')) return;
     const state = viewer.getAnimationState();
     if (!state.hasAnimations || state.duration <= 0) return;
+    const marker = (event.target as HTMLElement).closest<HTMLElement>('[data-keyframe-time]');
+
+    if (marker) {
+        if (event.shiftKey || event.ctrlKey || event.metaKey) return;
+        const time = Number(marker.dataset.keyframeTime);
+        if (!Number.isFinite(time)) return;
+        if (!isKeyframeTimeSelected(time)) {
+            setSelectedKeyframeTimes([time]);
+            renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+        }
+        timelineDragState.mode = 'retime';
+        timelineDragState.markerTime = time;
+        timelineDragState.startTimes = [...selectedKeyframeTimes];
+    } else {
+        timelineDragState.mode = 'box-select';
+        timelineDragState.markerTime = 0;
+        timelineDragState.startTimes = [];
+    }
 
     timelineDragState.active = true;
     timelineDragState.pointerId = event.pointerId;
@@ -1320,7 +1418,7 @@ function handleTimelinePointerDown(event: PointerEvent): void {
     timelineDragState.currentClientX = event.clientX;
     timelineDragState.moved = false;
     animKeyframeStrip.setPointerCapture(event.pointerId);
-    animKeyframeStrip.classList.add('selecting');
+    animKeyframeStrip.classList.add(timelineDragState.mode === 'retime' ? 'retiming' : 'selecting');
     updateTimelineSelectionBox();
     event.preventDefault();
 }
@@ -1331,6 +1429,17 @@ function handleTimelinePointerMove(event: PointerEvent): void {
     if (Math.abs(timelineDragState.currentClientX - timelineDragState.startClientX) > 4) {
         timelineDragState.moved = true;
     }
+
+    if (timelineDragState.mode === 'retime' && timelineDragState.moved) {
+        const duration = viewer.getAnimationState().duration;
+        const start = getTimelineTimeAtClientX(timelineDragState.startClientX, duration, { snap: false });
+        const current = getTimelineTimeAtClientX(timelineDragState.currentClientX, duration, { snap: false });
+        timelineRetimePreviewDelta = current - start;
+        renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+        event.preventDefault();
+        return;
+    }
+
     updateTimelineSelectionBox();
     event.preventDefault();
 }
@@ -1339,12 +1448,36 @@ function handleTimelinePointerUp(event: PointerEvent): void {
     if (!timelineDragState.active || timelineDragState.pointerId !== event.pointerId) return;
     const duration = viewer.getAnimationState().duration;
     const moved = timelineDragState.moved;
+    const mode = timelineDragState.mode;
+    const startTimes = [...timelineDragState.startTimes];
     const start = getTimelineTimeAtClientX(timelineDragState.startClientX, duration);
     const end = getTimelineTimeAtClientX(event.clientX, duration);
+    const rawStart = getTimelineTimeAtClientX(timelineDragState.startClientX, duration, { snap: false });
+    const rawEnd = getTimelineTimeAtClientX(event.clientX, duration, { snap: false });
+    const markerTime = timelineDragState.markerTime;
 
     cancelTimelineSelection();
 
     if (duration <= 0) return;
+
+    if (mode === 'retime') {
+        if (moved && startTimes.length > 0) {
+            const delta = rawEnd - rawStart;
+            const targetTimes = startTimes.map((time) => snapTimelineTime(time + delta, duration));
+            runAnimationEdit('移动关键帧', () => {
+                viewer.moveSelectedBoneKeyframesAtTimes(startTimes, targetTimes);
+            });
+            setSelectedKeyframeTimes(targetTimes);
+            if (selectedKeyframeTimes.length > 0) viewer.seekAnimation(selectedKeyframeTimes[0]);
+            showToast(`已移动 ${selectedKeyframeTimes.length} 个关键帧`, 'success');
+        } else {
+            setSelectedKeyframeTimes([markerTime]);
+            viewer.seekAnimation(markerTime);
+        }
+        renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+        return;
+    }
+
     if (moved) {
         selectKeyframeTimeRange(Math.min(start, end), Math.max(start, end));
         if (selectedKeyframeTimes.length > 0) viewer.seekAnimation(selectedKeyframeTimes[0]);
@@ -1366,16 +1499,20 @@ function cancelTimelineSelection(): void {
         }
     }
     timelineDragState.active = false;
+    timelineDragState.mode = 'idle';
     timelineDragState.pointerId = null;
     timelineDragState.moved = false;
-    animKeyframeStrip.classList.remove('selecting');
+    timelineDragState.markerTime = 0;
+    timelineDragState.startTimes = [];
+    timelineRetimePreviewDelta = 0;
+    animKeyframeStrip.classList.remove('selecting', 'retiming');
     updateTimelineSelectionBox();
 }
 
 function updateTimelineSelectionBox(): void {
     const selectionBox = animKeyframeStrip.querySelector<HTMLElement>('.animation-selection-box');
     if (!selectionBox) return;
-    if (!timelineDragState.active || !timelineDragState.moved) {
+    if (!timelineDragState.active || !timelineDragState.moved || timelineDragState.mode !== 'box-select') {
         selectionBox.hidden = true;
         return;
     }
@@ -1388,11 +1525,23 @@ function updateTimelineSelectionBox(): void {
     selectionBox.style.width = `${Math.abs(current - start)}px`;
 }
 
-function getTimelineTimeAtClientX(clientX: number, duration: number): number {
+function getTimelineTimeAtClientX(
+    clientX: number,
+    duration: number,
+    options: { snap?: boolean } = {},
+): number {
     if (duration <= 0) return 0;
     const rect = animKeyframeStrip.getBoundingClientRect();
     const ratio = rect.width > 0 ? clamp((clientX - rect.left) / rect.width, 0, 1) : 0;
-    return duration * ratio;
+    const time = duration * ratio;
+    return options.snap === false ? time : snapTimelineTime(time, duration);
+}
+
+function snapTimelineTime(time: number, duration: number): number {
+    const clamped = clamp(time, 0, Math.max(0, duration));
+    if (!timelineSnapEnabled) return clamped;
+    const frame = Math.round(clamped * timelineFps);
+    return clamp(frame / timelineFps, 0, Math.max(0, duration));
 }
 
 function selectKeyframeTimeRange(start: number, end: number): void {
