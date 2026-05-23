@@ -1224,11 +1224,23 @@ export class Viewer {
         if (!clip || !this.selectedBone) return;
 
         const time = this.activeAction?.time ?? 0;
+        this.deleteSelectedBoneKeyframesAtTimes([time]);
+    }
+
+    deleteSelectedBoneKeyframesAtTimes(times: number[]): void {
+        const clip = this.animClips[this.activeClipIndex];
+        if (!clip || !this.selectedBone || times.length === 0) return;
+
         let changed = false;
         const nextTracks: KeyframeTrack[] = [];
         for (const track of clip.tracks) {
-            const nextTrack = removeKeyframeNearTime(track, this.selectedBone, time);
-            if (nextTrack !== track) changed = true;
+            let nextTrack: KeyframeTrack | null = track;
+            for (const time of times) {
+                if (!nextTrack) break;
+                const candidate = removeKeyframeNearTime(nextTrack, this.selectedBone, time);
+                if (candidate !== nextTrack) changed = true;
+                nextTrack = candidate;
+            }
             if (nextTrack) nextTracks.push(nextTrack);
         }
         clip.tracks = nextTracks;

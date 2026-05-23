@@ -233,7 +233,8 @@ const btnResetTextureTransform = $<HTMLButtonElement>('btn-reset-texture-transfo
 const animBar = $('anim-bar');
 const animPlayBtn = $<HTMLButtonElement>('anim-play');
 const animStopBtn = $<HTMLButtonElement>('anim-stop');
-const animClipSelect = $<HTMLSelectElement>('anim-clip');
+const animClipSearch = $<HTMLInputElement>('anim-clip-search');
+const animClipList = $('anim-clip-list');
 const animEditOpenBtn = $<HTMLButtonElement>('anim-edit-open');
 const animTimeRange = $<HTMLInputElement>('anim-time');
 const animTimeLabel = $('anim-time-label');
@@ -243,7 +244,8 @@ const animSummary = $('anim-summary');
 const animEditorEmpty = $('anim-editor-empty');
 const animEditor = $('anim-editor');
 const animShowSkeletonInput = $<HTMLInputElement>('anim-show-skeleton');
-const animBoneSelect = $<HTMLSelectElement>('anim-bone-select');
+const animBoneSearch = $<HTMLInputElement>('anim-bone-search');
+const animBoneList = $('anim-bone-list');
 const animSelectedBone = $('anim-selected-bone');
 const animModeTranslate = $<HTMLButtonElement>('anim-mode-translate');
 const animModeRotate = $<HTMLButtonElement>('anim-mode-rotate');
@@ -282,6 +284,21 @@ const modelNameEls = [toolbarModelName, modelName];
 
 let animTimeRangeSyncing = false;
 let selectedAnimationTrackIndex = -1;
+let selectedKeyframeTimes: number[] = [];
+
+const timelineDragState: {
+    active: boolean;
+    pointerId: number | null;
+    startClientX: number;
+    currentClientX: number;
+    moved: boolean;
+} = {
+    active: false,
+    pointerId: null,
+    startClientX: 0,
+    currentClientX: 0,
+    moved: false,
+};
 
 const viewer = new Viewer(canvas);
 
@@ -845,10 +862,17 @@ function setupAnimationControls(): void {
         viewer.pauseAnimation();
     });
 
-    animClipSelect.addEventListener('change', () => {
-        const index = Number(animClipSelect.value);
+    animClipSearch.addEventListener('input', () => {
+        renderAnimationClipList(viewer.getAnimationState());
+    });
+
+    animClipList.addEventListener('click', (event) => {
+        const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-clip-index]');
+        if (!button) return;
+        const index = Number(button.dataset.clipIndex);
         if (!Number.isFinite(index)) return;
         const wasPlaying = viewer.getAnimationState().playing;
+        selectedKeyframeTimes = [];
         viewer.selectAnimationClip(index, { autoPlay: wasPlaying });
     });
 
@@ -860,8 +884,14 @@ function setupAnimationControls(): void {
         viewer.setSkeletonVisible(animShowSkeletonInput.checked);
     });
 
-    animBoneSelect.addEventListener('change', () => {
-        const index = Number(animBoneSelect.value);
+    animBoneSearch.addEventListener('input', () => {
+        renderSkeletonControls(viewer.getSkeletonEditorState());
+    });
+
+    animBoneList.addEventListener('click', (event) => {
+        const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-bone-index]');
+        if (!button) return;
+        const index = Number(button.dataset.boneIndex);
         if (!Number.isFinite(index)) return;
         viewer.selectBone(index);
     });
@@ -886,10 +916,19 @@ function setupAnimationControls(): void {
     });
 
     btnDeleteKeyframe.addEventListener('click', () => {
-        runAnimationEdit('删除关键帧', () => {
-            viewer.deleteSelectedBoneKeyframe();
-        });
-        showToast('已删除当前附近关键帧', 'success');
+        if (selectedKeyframeTimes.length > 0) {
+            const count = selectedKeyframeTimes.length;
+            runAnimationEdit('删除选中关键帧', () => {
+                viewer.deleteSelectedBoneKeyframesAtTimes(selectedKeyframeTimes);
+            });
+            selectedKeyframeTimes = [];
+            showToast(`已删除 ${count} 个选中关键帧`, 'success');
+        } else {
+            runAnimationEdit('删除关键帧', () => {
+                viewer.deleteSelectedBoneKeyframe();
+            });
+            showToast('已删除当前附近关键帧', 'success');
+        }
     });
 
     btnAnimHistoryUndo.addEventListener('click', () => {
@@ -900,13 +939,11 @@ function setupAnimationControls(): void {
         redoLastEdit();
     });
 
-    animKeyframeStrip.addEventListener('click', (event) => {
-        const state = viewer.getAnimationState();
-        if (!state.hasAnimations || state.duration <= 0) return;
-        const rect = animKeyframeStrip.getBoundingClientRect();
-        const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-        viewer.seekAnimation(state.duration * ratio);
-    });
+    animKeyframeStrip.addEventListener('click', handleTimelineClick);
+    animKeyframeStrip.addEventListener('pointerdown', handleTimelinePointerDown);
+    animKeyframeStrip.addEventListener('pointermove', handleTimelinePointerMove);
+    animKeyframeStrip.addEventListener('pointerup', handleTimelinePointerUp);
+    animKeyframeStrip.addEventListener('pointercancel', cancelTimelineSelection);
 
     animClipNameInput.addEventListener('change', () => {
         const name = animClipNameInput.value;
@@ -993,34 +1030,18 @@ function refreshAnimationBar(state: AnimationPlaybackState): void {
     if (!state.hasAnimations) {
         animBar.hidden = true;
         animBar.classList.remove('is-playing');
-        animClipSelect.innerHTML = '';
+        animClipList.innerHTML = '';
         animTimeRange.value = '0';
         animTimeRange.max = '0';
         animTimeLabel.textContent = '—';
         animSummary.textContent = '';
+        selectedKeyframeTimes = [];
+        renderAnimationTimeline(viewer.getSkeletonEditorState(), state);
         return;
     }
 
     animBar.hidden = false;
-
-    const previousValue = animClipSelect.value;
-    const desiredValue = String(state.activeIndex);
-    const optionsMatch = animClipSelect.options.length === state.clips.length
-        && state.clips.every((meta, index) => animClipSelect.options[index]?.value === String(meta.index));
-
-    if (!optionsMatch) {
-        animClipSelect.innerHTML = state.clips
-            .map((meta) => {
-                const label = `${meta.name} · ${meta.duration.toFixed(2)}s`;
-                return `<option value="${meta.index}">${escapeHtml(label)}</option>`;
-            })
-            .join('');
-    }
-    if (animClipSelect.value !== desiredValue) {
-        animClipSelect.value = desiredValue;
-    } else if (!optionsMatch && previousValue !== desiredValue) {
-        animClipSelect.value = desiredValue;
-    }
+    renderAnimationClipList(state);
 
     animBar.classList.toggle('is-playing', state.playing);
     animPlayBtn.title = state.playing ? '暂停 (Space)' : '播放 (Space)';
@@ -1036,6 +1057,26 @@ function refreshAnimationBar(state: AnimationPlaybackState): void {
         : '';
 
     syncAnimationProgress(state);
+    renderAnimationTimeline(viewer.getSkeletonEditorState(), state);
+}
+
+function renderAnimationClipList(state: AnimationPlaybackState): void {
+    const query = normalizeSearchText(animClipSearch.value);
+    const clips = state.clips.filter((clip) => normalizeSearchText(clip.name).includes(query));
+
+    animClipList.innerHTML = clips.length > 0
+        ? clips.map((clip) => {
+            const active = clip.index === state.activeIndex;
+            const selected = active ? ' aria-selected="true"' : ' aria-selected="false"';
+            const className = `anim-clip-item${active ? ' active' : ''}`;
+            return `
+                <button class="${className}" type="button" role="option" data-clip-index="${clip.index}"${selected}>
+                    <span class="anim-clip-name">${escapeHtml(clip.name)}</span>
+                    <span class="anim-clip-meta">${clip.duration.toFixed(2)}s · ${clip.tracks}</span>
+                </button>
+            `;
+        }).join('')
+        : '<div class="anim-list-empty">没有匹配动画</div>';
 }
 
 function syncAnimationProgress(state: AnimationPlaybackState): void {
@@ -1122,7 +1163,7 @@ function syncAnimationEditor(): void {
 function renderSkeletonControls(state: SkeletonEditorState): void {
     animShowSkeletonInput.checked = state.skeletonVisible;
     animShowSkeletonInput.disabled = !state.hasSkeleton;
-    animBoneSelect.disabled = !state.hasSkeleton;
+    animBoneSearch.disabled = !state.hasSkeleton;
     animIkEnabledInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnInsertKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnDeleteKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
@@ -1130,21 +1171,22 @@ function renderSkeletonControls(state: SkeletonEditorState): void {
     animIkEnabledInput.checked = state.ikEnabled;
     syncTransformModeButtons(state.transformMode);
 
-    const currentValue = animBoneSelect.value;
-    const optionsMatch = animBoneSelect.options.length === state.bones.length
-        && state.bones.every((bone, index) => animBoneSelect.options[index]?.value === String(bone.index));
-    if (!optionsMatch) {
-        animBoneSelect.innerHTML = state.bones
-            .map((bone) => `<option value="${bone.index}">${escapeHtml(bone.name)}</option>`)
-            .join('');
-    }
-
-    const desiredValue = String(state.selectedBoneIndex);
-    if (state.selectedBoneIndex >= 0 && animBoneSelect.value !== desiredValue) {
-        animBoneSelect.value = desiredValue;
-    } else if (!optionsMatch && currentValue) {
-        animBoneSelect.value = currentValue;
-    }
+    const query = normalizeSearchText(animBoneSearch.value);
+    const bones = state.bones.filter((bone) => {
+        const text = normalizeSearchText(`${bone.name} ${bone.parentName}`);
+        return text.includes(query);
+    });
+    animBoneList.innerHTML = bones.length > 0
+        ? bones.map((bone) => {
+            const active = bone.selected ? ' active' : '';
+            return `
+                <button class="animation-bone-item${active}" type="button" role="option" data-bone-index="${bone.index}" aria-selected="${bone.selected}">
+                    <span class="animation-bone-name">${escapeHtml(bone.name)}</span>
+                    <span class="animation-bone-parent">${escapeHtml(bone.parentName || '根')}</span>
+                </button>
+            `;
+        }).join('')
+        : '<div class="animation-list-empty">没有匹配骨骼</div>';
 }
 
 function syncTransformModeButtons(mode: BoneTransformMode): void {
@@ -1161,13 +1203,225 @@ function renderAnimationTimeline(
 ): void {
     const duration = playbackState.duration;
     const playhead = duration > 0 ? clamp((playbackState.time / duration) * 100, 0, 100) : 0;
+    const width = getTimelineContentWidth(duration);
     animKeyframeStrip.style.setProperty('--playhead', `${playhead}%`);
-    animKeyframeStrip.innerHTML = duration > 0
-        ? skeletonState.keyframes.map((marker) => {
+    animKeyframeStrip.style.setProperty('--timeline-width', `${width}px`);
+    if (duration <= 0) {
+        animKeyframeStrip.innerHTML = '';
+        selectedKeyframeTimes = [];
+        return;
+    }
+    const markerTimes = skeletonState.keyframes.map((marker) => marker.time);
+    selectedKeyframeTimes = selectedKeyframeTimes.filter((time) => markerTimes.some((markerTime) => nearlyEqualTimeForUi(time, markerTime)));
+
+    const ticks = buildTimelineTicks(duration).map((tick) => {
+        const left = clamp((tick.time / duration) * 100, 0, 100);
+        return `
+            <span class="animation-time-tick ${tick.major ? 'major' : 'minor'}" style="left:${left}%">
+                ${tick.major ? `<span>${escapeHtml(tick.label)}</span>` : ''}
+            </span>
+        `;
+    }).join('');
+
+    const markers = skeletonState.keyframes.map((marker) => {
             const left = clamp((marker.time / duration) * 100, 0, 100);
-            return `<span class="animation-keyframe-marker${marker.selectedBone ? ' selected' : ''}" style="left:${left}%"></span>`;
-        }).join('')
-        : '';
+            const selected = isKeyframeTimeSelected(marker.time);
+            const classes = [
+                'animation-keyframe-marker',
+                marker.selectedBone ? 'selected-bone' : '',
+                selected ? 'selected' : '',
+            ].filter(Boolean).join(' ');
+            return `
+                <button
+                    class="${classes}"
+                    type="button"
+                    data-keyframe-time="${marker.time}"
+                    style="left:${left}%"
+                    aria-label="关键帧 ${marker.time.toFixed(3)} 秒"
+                    aria-pressed="${selected}"
+                ></button>
+            `;
+        }).join('');
+
+    animKeyframeStrip.innerHTML = `
+        <div class="animation-time-ruler">${ticks}</div>
+        <div class="animation-keyframe-lane">${markers}</div>
+        <span class="animation-selection-box" aria-hidden="true"></span>
+    `;
+    updateTimelineSelectionBox();
+}
+
+function getTimelineContentWidth(duration: number): number {
+    if (duration <= 0) return 900;
+    return Math.max(960, Math.ceil(duration * 180));
+}
+
+function buildTimelineTicks(duration: number): Array<{ time: number; label: string; major: boolean }> {
+    const ticks: Array<{ time: number; label: string; major: boolean }> = [];
+    const majorStep = pickTimelineMajorStep(duration);
+    const minorStep = majorStep / 4;
+    for (let time = 0; time <= duration + minorStep * 0.5; time += minorStep) {
+        const clampedTime = Math.min(time, duration);
+        const major = nearlyEqual((Math.round(clampedTime / majorStep) * majorStep), clampedTime)
+            || nearlyEqual(clampedTime, 0)
+            || nearlyEqual(clampedTime, duration);
+        ticks.push({
+            time: clampedTime,
+            label: `${clampedTime.toFixed(majorStep < 1 ? 1 : 0)}s`,
+            major,
+        });
+    }
+    return ticks;
+}
+
+function pickTimelineMajorStep(duration: number): number {
+    if (duration <= 2) return 0.25;
+    if (duration <= 6) return 0.5;
+    if (duration <= 16) return 1;
+    if (duration <= 40) return 2;
+    if (duration <= 90) return 5;
+    return 10;
+}
+
+function handleTimelineClick(event: MouseEvent): void {
+    const marker = (event.target as HTMLElement).closest<HTMLElement>('[data-keyframe-time]');
+    if (!marker) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    const time = Number(marker.dataset.keyframeTime);
+    if (!Number.isFinite(time)) return;
+
+    const state = viewer.getAnimationState();
+    if (!state.hasAnimations || state.duration <= 0) return;
+
+    if (event.shiftKey && selectedKeyframeTimes.length > 0) {
+        const anchor = selectedKeyframeTimes[selectedKeyframeTimes.length - 1];
+        selectKeyframeTimeRange(Math.min(anchor, time), Math.max(anchor, time));
+    } else if (event.ctrlKey || event.metaKey) {
+        toggleSelectedKeyframeTime(time);
+    } else {
+        setSelectedKeyframeTimes([time]);
+    }
+
+    viewer.seekAnimation(time);
+    renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+}
+
+function handleTimelinePointerDown(event: PointerEvent): void {
+    if (event.button !== 0) return;
+    if ((event.target as HTMLElement).closest('[data-keyframe-time]')) return;
+    const state = viewer.getAnimationState();
+    if (!state.hasAnimations || state.duration <= 0) return;
+
+    timelineDragState.active = true;
+    timelineDragState.pointerId = event.pointerId;
+    timelineDragState.startClientX = event.clientX;
+    timelineDragState.currentClientX = event.clientX;
+    timelineDragState.moved = false;
+    animKeyframeStrip.setPointerCapture(event.pointerId);
+    animKeyframeStrip.classList.add('selecting');
+    updateTimelineSelectionBox();
+    event.preventDefault();
+}
+
+function handleTimelinePointerMove(event: PointerEvent): void {
+    if (!timelineDragState.active || timelineDragState.pointerId !== event.pointerId) return;
+    timelineDragState.currentClientX = event.clientX;
+    if (Math.abs(timelineDragState.currentClientX - timelineDragState.startClientX) > 4) {
+        timelineDragState.moved = true;
+    }
+    updateTimelineSelectionBox();
+    event.preventDefault();
+}
+
+function handleTimelinePointerUp(event: PointerEvent): void {
+    if (!timelineDragState.active || timelineDragState.pointerId !== event.pointerId) return;
+    const duration = viewer.getAnimationState().duration;
+    const moved = timelineDragState.moved;
+    const start = getTimelineTimeAtClientX(timelineDragState.startClientX, duration);
+    const end = getTimelineTimeAtClientX(event.clientX, duration);
+
+    cancelTimelineSelection();
+
+    if (duration <= 0) return;
+    if (moved) {
+        selectKeyframeTimeRange(Math.min(start, end), Math.max(start, end));
+        if (selectedKeyframeTimes.length > 0) viewer.seekAnimation(selectedKeyframeTimes[0]);
+        renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+        return;
+    }
+
+    selectedKeyframeTimes = [];
+    viewer.seekAnimation(end);
+    renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+}
+
+function cancelTimelineSelection(): void {
+    if (timelineDragState.pointerId !== null) {
+        try {
+            animKeyframeStrip.releasePointerCapture(timelineDragState.pointerId);
+        } catch {
+            // Pointer capture may already be gone after a browser cancel event.
+        }
+    }
+    timelineDragState.active = false;
+    timelineDragState.pointerId = null;
+    timelineDragState.moved = false;
+    animKeyframeStrip.classList.remove('selecting');
+    updateTimelineSelectionBox();
+}
+
+function updateTimelineSelectionBox(): void {
+    const selectionBox = animKeyframeStrip.querySelector<HTMLElement>('.animation-selection-box');
+    if (!selectionBox) return;
+    if (!timelineDragState.active || !timelineDragState.moved) {
+        selectionBox.hidden = true;
+        return;
+    }
+
+    const rect = animKeyframeStrip.getBoundingClientRect();
+    const start = clamp(timelineDragState.startClientX - rect.left, 0, rect.width);
+    const current = clamp(timelineDragState.currentClientX - rect.left, 0, rect.width);
+    selectionBox.hidden = false;
+    selectionBox.style.left = `${Math.min(start, current)}px`;
+    selectionBox.style.width = `${Math.abs(current - start)}px`;
+}
+
+function getTimelineTimeAtClientX(clientX: number, duration: number): number {
+    if (duration <= 0) return 0;
+    const rect = animKeyframeStrip.getBoundingClientRect();
+    const ratio = rect.width > 0 ? clamp((clientX - rect.left) / rect.width, 0, 1) : 0;
+    return duration * ratio;
+}
+
+function selectKeyframeTimeRange(start: number, end: number): void {
+    const markers = viewer.getSkeletonEditorState().keyframes
+        .map((marker) => marker.time)
+        .filter((time) => time >= start - 1e-4 && time <= end + 1e-4);
+    setSelectedKeyframeTimes(markers);
+}
+
+function setSelectedKeyframeTimes(times: number[]): void {
+    const values = [...new Set(times.map((time) => Number(time.toFixed(4))))];
+    selectedKeyframeTimes = values.sort((a, b) => a - b);
+}
+
+function toggleSelectedKeyframeTime(time: number): void {
+    const rounded = Number(time.toFixed(4));
+    if (selectedKeyframeTimes.some((item) => nearlyEqualTimeForUi(item, rounded))) {
+        selectedKeyframeTimes = selectedKeyframeTimes.filter((item) => !nearlyEqualTimeForUi(item, rounded));
+    } else {
+        setSelectedKeyframeTimes([...selectedKeyframeTimes, rounded]);
+    }
+}
+
+function isKeyframeTimeSelected(time: number): boolean {
+    return selectedKeyframeTimes.some((item) => nearlyEqualTimeForUi(item, time));
+}
+
+function nearlyEqualTimeForUi(a: number, b: number): boolean {
+    return Math.abs(a - b) < 1e-4;
 }
 
 function renderAnimationHistory(): void {
@@ -2870,6 +3124,7 @@ function activateDocument(id: string, options: { fit?: boolean } = {}): void {
     flushPendingUndoTransactions();
     activeDocumentId = id;
     resetUndoDrafts();
+    selectedKeyframeTimes = [];
     currentUvEditorState = null;
     currentUvEdges = [];
     currentUvEdgeMap.clear();
@@ -2936,6 +3191,7 @@ function clearActiveDocument(): void {
     active.redoStack = [];
 
     resetUndoDrafts();
+    selectedKeyframeTimes = [];
     currentUvEditorState = null;
     currentUvEdges = [];
     currentUvEdgeMap.clear();
@@ -4950,6 +5206,10 @@ function escapeHtml(value: string): string {
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;')
         .replaceAll("'", '&#39;');
+}
+
+function normalizeSearchText(value: string): string {
+    return value.trim().toLocaleLowerCase();
 }
 
 function createSampleModel(): Object3D {

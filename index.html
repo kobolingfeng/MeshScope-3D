@@ -146,35 +146,47 @@
                     <canvas id="canvas" role="img" aria-label="3D 模型预览画布"></canvas>
 
                     <div class="anim-bar" id="anim-bar" hidden>
-                        <button class="anim-btn anim-btn-play" id="anim-play" type="button" title="播放 / 暂停 (Space)" aria-label="播放或暂停动画">
-                            <svg class="anim-icon-play" viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M8 5l12 7-12 7z"></path>
-                            </svg>
-                            <svg class="anim-icon-pause" viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M7 5h4v14H7zM13 5h4v14h-4z"></path>
-                            </svg>
-                        </button>
-                        <button class="anim-btn anim-btn-stop" id="anim-stop" type="button" title="回到起点" aria-label="停止动画并回到起点">
-                            <svg viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M6 6h12v12H6z"></path>
-                            </svg>
-                        </button>
-                        <select class="anim-clip-select" id="anim-clip" aria-label="选择动画"></select>
-                        <button class="anim-edit-btn" id="anim-edit-open" type="button">编辑</button>
-                        <div class="anim-progress">
-                            <input type="range" id="anim-time" min="0" max="1" step="0.001" value="0">
-                            <span class="anim-time-label" id="anim-time-label">0.00 / 0.00s</span>
+                        <div class="anim-clip-browser">
+                            <input class="anim-search-input" id="anim-clip-search" type="search" placeholder="搜索动画" aria-label="搜索动画">
+                            <div class="anim-clip-list" id="anim-clip-list" role="listbox" aria-label="动画列表"></div>
                         </div>
-                        <label class="anim-toggle" title="循环播放">
-                            <input type="checkbox" id="anim-loop" checked>
-                            <span>循环</span>
-                        </label>
-                        <label class="anim-speed">
-                            <span>速度</span>
-                            <input id="anim-speed" type="number" min="0" max="4" step="0.1" value="1">
-                            <span class="anim-speed-suffix">×</span>
-                        </label>
-                        <span class="anim-summary" id="anim-summary"></span>
+                        <div class="anim-main">
+                            <div class="anim-transport">
+                                <button class="anim-btn anim-btn-play" id="anim-play" type="button" title="播放 / 暂停 (Space)" aria-label="播放或暂停动画">
+                                    <svg class="anim-icon-play" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M8 5l12 7-12 7z"></path>
+                                    </svg>
+                                    <svg class="anim-icon-pause" viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M7 5h4v14H7zM13 5h4v14h-4z"></path>
+                                    </svg>
+                                </button>
+                                <button class="anim-btn anim-btn-stop" id="anim-stop" type="button" title="回到起点" aria-label="停止动画并回到起点">
+                                    <svg viewBox="0 0 24 24" aria-hidden="true">
+                                        <path d="M6 6h12v12H6z"></path>
+                                    </svg>
+                                </button>
+                                <button class="anim-edit-btn" id="anim-edit-open" type="button">编辑</button>
+                                <label class="anim-toggle" title="循环播放">
+                                    <input type="checkbox" id="anim-loop" checked>
+                                    <span>循环</span>
+                                </label>
+                                <label class="anim-speed">
+                                    <span>速度</span>
+                                    <input id="anim-speed" type="number" min="0" max="4" step="0.1" value="1">
+                                    <span class="anim-speed-suffix">×</span>
+                                </label>
+                                <span class="anim-summary" id="anim-summary"></span>
+                            </div>
+                            <div class="anim-timeline-panel">
+                                <div class="anim-timeline-scroll" id="anim-timeline-scroll">
+                                    <div class="animation-keyframe-strip animation-keyframe-strip-wide" id="anim-keyframe-strip" role="slider" aria-label="动画关键帧时间轴"></div>
+                                </div>
+                                <div class="anim-progress">
+                                    <input type="range" id="anim-time" min="0" max="1" step="0.001" value="0">
+                                    <span class="anim-time-label" id="anim-time-label">0.00 / 0.00s</span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="loading" id="loading" hidden>
@@ -390,9 +402,10 @@
                                 <input id="anim-show-skeleton" type="checkbox" checked>
                             </label>
                             <label class="control-row control-row-select">
-                                <span class="control-label">选中骨骼</span>
-                                <select id="anim-bone-select" class="select-input"></select>
+                                <span class="control-label">搜索骨骼</span>
+                                <input id="anim-bone-search" class="text-input" type="search" placeholder="搜索骨骼">
                             </label>
+                            <div class="animation-bone-list" id="anim-bone-list" role="listbox" aria-label="骨骼列表"></div>
                             <div class="property-grid">
                                 <span class="property-label">当前</span>
                                 <strong class="property-value" id="anim-selected-bone">—</strong>
@@ -411,7 +424,6 @@
                                 <button id="btn-insert-keyframe" class="mini-btn" type="button">插入关键帧</button>
                                 <button id="btn-delete-keyframe" class="mini-btn" type="button">删除当前帧</button>
                             </div>
-                            <div class="animation-keyframe-strip" id="anim-keyframe-strip" role="slider" aria-label="动画关键帧时间轴"></div>
                             <div class="animation-history-panel">
                                 <div class="animation-history-header">
                                     <strong>操作历史</strong>
