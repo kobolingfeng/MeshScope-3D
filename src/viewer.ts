@@ -353,6 +353,7 @@ export class Viewer {
     private texturePreviewCache = new WeakMap<Texture, string>();
     private textureDrawableCache = new WeakMap<Texture, CanvasImageSource>();
     private uvEditorCache = new WeakMap<Object3D, UvEditorCache>();
+    private boundsCache = new WeakMap<Object3D, { size: Vector3; center: Vector3 }>();
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
@@ -520,6 +521,7 @@ export class Viewer {
         });
         this.materialStates.delete(obj);
         this.uvEditorCache.delete(obj);
+        this.boundsCache.delete(obj);
     }
 
     frameObject(object: Object3D): void {
@@ -654,12 +656,25 @@ export class Viewer {
     }
 
     getBoundsFor(root: Object3D): { size: Vector3; center: Vector3 } | null {
+        const cached = this.boundsCache.get(root);
+        if (cached) {
+            return {
+                size: cached.size.clone(),
+                center: cached.center.clone(),
+            };
+        }
+
         const box = new Box3().setFromObject(root);
         if (box.isEmpty()) return null;
-        return {
+        const bounds = {
             size: box.getSize(new Vector3()),
             center: box.getCenter(new Vector3()),
         };
+        this.boundsCache.set(root, {
+            size: bounds.size.clone(),
+            center: bounds.center.clone(),
+        });
+        return bounds;
     }
 
     setGridVisible(on: boolean): void { this.grid.visible = on; }
@@ -1168,7 +1183,8 @@ export class Viewer {
         };
     }
 
-    getSkeletonEditorState(): SkeletonEditorState {
+    getSkeletonEditorState(options: { includeKeyframes?: boolean } = {}): SkeletonEditorState {
+        const includeKeyframes = options.includeKeyframes ?? true;
         const selectedIndex = this.selectedBone ? this.bones.indexOf(this.selectedBone) : -1;
         const selectedName = this.selectedBone ? getBoneDisplayName(this.selectedBone, selectedIndex) : '';
         return {
@@ -1183,13 +1199,16 @@ export class Viewer {
             selectedBoneName: selectedName,
             transformMode: this.boneTransformMode,
             ikEnabled: this.ikEnabled,
-            keyframes: this.getTimelineMarkers(),
+            keyframes: includeKeyframes ? this.getTimelineMarkers() : [],
         };
     }
 
     setSkeletonVisible(visible: boolean): void {
         this.skeletonVisible = visible;
-        if (visible) this.skeletonEditorActivated = true;
+        if (visible) {
+            this.skeletonEditorActivated = true;
+            this.ensureSkeletonOverlay();
+        }
         if (this.skeletonHelper) this.skeletonHelper.visible = false;
         for (const handle of this.boneHandles.values()) handle.visible = visible;
         for (const line of this.boneLines.values()) line.visible = visible;
@@ -1959,7 +1978,32 @@ export class Viewer {
             return;
         }
 
-        this.skeletonHelper = new SkeletonHelper(object);
+        this.selectedBone = this.bones[0] ?? null;
+        this.refreshIkChain();
+        this.attachTransformTarget();
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+    }
+
+    private disposeSkeletonEditor(): void {
+        this.transformControls.detach();
+        this.disposeSkeletonOverlay();
+        if (this.ikTargetMesh) this.scene.remove(this.ikTargetMesh);
+        this.ikTarget = null;
+        this.ikTargetMesh = null;
+        this.ikChain = [];
+        this.bones = [];
+        this.boneMetaBase = [];
+        this.timelineMarkerCache = null;
+        this.selectedBone = null;
+        this.ikEnabled = false;
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+    }
+
+    private ensureSkeletonOverlay(): void {
+        const root = this.getActiveRoot();
+        if (!root || this.bones.length === 0 || this.boneHandles.size > 0) return;
+
+        this.skeletonHelper = new SkeletonHelper(root);
         this.skeletonHelper.visible = false;
         this.skeletonHelper.name = '__skeleton_editor_helper__';
         const skeletonMaterial = this.skeletonHelper.material as Material & { color?: Color };
@@ -1994,15 +2038,10 @@ export class Viewer {
             }
         }
 
-        this.selectedBone = this.bones[0] ?? null;
-        this.refreshIkChain();
-        this.attachTransformTarget();
         this.updateSkeletonOverlay();
-        this.onSkeletonChanged(this.getSkeletonEditorState());
     }
 
-    private disposeSkeletonEditor(): void {
-        this.transformControls.detach();
+    private disposeSkeletonOverlay(): void {
         if (this.skeletonHelper) {
             this.scene.remove(this.skeletonHelper);
             (this.skeletonHelper.material as Material).dispose();
@@ -2017,20 +2056,11 @@ export class Viewer {
         }
         this.boneHandles.clear();
         this.boneLines.clear();
-        if (this.ikTargetMesh) this.scene.remove(this.ikTargetMesh);
-        this.ikTarget = null;
-        this.ikTargetMesh = null;
-        this.ikChain = [];
-        this.bones = [];
-        this.boneMetaBase = [];
-        this.timelineMarkerCache = null;
-        this.selectedBone = null;
-        this.ikEnabled = false;
-        this.onSkeletonChanged(this.getSkeletonEditorState());
     }
 
     private updateSkeletonOverlay(): void {
         if (this.bones.length === 0) return;
+        if (this.boneHandles.size === 0 && this.boneLines.size === 0 && !this.ikTargetMesh) return;
         const scale = this.getBoneHandleScale();
         const start = new Vector3();
         const end = new Vector3();
@@ -2079,7 +2109,9 @@ export class Viewer {
     }
 
     private handleSkeletonPointerDown(event: PointerEvent): void {
-        if (!this.skeletonVisible || this.transformDragging || this.boneHandles.size === 0) return;
+        if (!this.skeletonVisible || this.transformDragging) return;
+        this.ensureSkeletonOverlay();
+        if (this.boneHandles.size === 0) return;
         if (event.button !== 0) return;
         const rect = this.canvas.getBoundingClientRect();
         this.pointerNdc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;

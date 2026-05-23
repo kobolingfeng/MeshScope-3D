@@ -509,6 +509,7 @@ viewer.onFps = (fps) => {
 };
 
 viewer.onRender = () => {
+    if (layoutState.activeTab !== 'properties') return;
     const now = performance.now();
     if (now - lastPropertySyncTs < 120) return;
     lastPropertySyncTs = now;
@@ -518,7 +519,7 @@ viewer.onRender = () => {
 viewer.onAnimationsChanged = (state) => {
     try {
         refreshAnimationBar(state);
-        syncAnimationEditor();
+        if (layoutState.activeTab === 'animation') syncAnimationEditor();
         updateStatusChips();
     } catch (error) {
         console.warn('onAnimationsChanged failed', error);
@@ -527,7 +528,7 @@ viewer.onAnimationsChanged = (state) => {
 
 viewer.onSkeletonChanged = () => {
     try {
-        syncAnimationEditor();
+        if (layoutState.activeTab === 'animation') syncAnimationEditor();
         updateStatusChips();
     } catch (error) {
         console.warn('onSkeletonChanged failed', error);
@@ -596,10 +597,6 @@ async function bootstrap(): Promise<void> {
     loading.hidden = true;
 
     activateDocument(activeDocumentId, { fit: false });
-    syncMaterialControls();
-    syncTextureInspector();
-    syncAnimationEditor();
-    syncPropertyPanelCamera();
 
     if (inNative) {
         void app.registerFileAssociations(ACCEPT_EXTS).catch((error) => {
@@ -756,6 +753,7 @@ function setupContentModeControls(): void {
     btnOpenUvTab.addEventListener('click', () => {
         layoutState.activeTab = 'textures';
         applyInspectorState();
+        syncActiveInspectorControls();
         persistLayout();
     });
 }
@@ -768,6 +766,7 @@ function setupInspector(): void {
             layoutState.activeTab = tab;
             applyInspectorState();
             if (tab === 'animation') viewer.setSkeletonVisible(true);
+            syncActiveInspectorControls();
             persistLayout();
         });
 
@@ -789,6 +788,7 @@ function setupInspector(): void {
             layoutState.activeTab = tab;
             applyInspectorState();
             if (tab === 'animation') viewer.setSkeletonVisible(true);
+            syncActiveInspectorControls();
             persistLayout();
             nextButton.focus();
         });
@@ -1029,7 +1029,7 @@ function setupKeyboardShortcuts(): void {
         // Ctrl+C / Ctrl+V / Ctrl+Shift+V — bone pose clipboard.
         // Only when the skeleton overlay is visible (clear "rigging mode" signal),
         // so we don't steal default browser copy/paste outside that mode.
-        const skeletonActive = viewer.getSkeletonEditorState().skeletonVisible
+        const skeletonActive = viewer.getSkeletonEditorState({ includeKeyframes: false }).skeletonVisible
             && Boolean(viewer.getSelectedBoneLocalTrs());
         if (ctrlOnly && skeletonActive && key.toLowerCase() === 'c' && !event.shiftKey) {
             event.preventDefault();
@@ -1201,7 +1201,7 @@ function selectAdjacentTimelineKeyframe(direction: 1 | -1): boolean {
 }
 
 function selectAdjacentBone(direction: 1 | -1): boolean {
-    const state = viewer.getSkeletonEditorState();
+    const state = viewer.getSkeletonEditorState({ includeKeyframes: false });
     if (!state.hasSkeleton || state.selectedBoneIndex < 0) return false;
 
     const nextIndex = clamp(state.selectedBoneIndex + direction, 0, state.bones.length - 1);
@@ -1226,7 +1226,7 @@ function updateStatusChips(): void {
     }
     try {
         const animState = viewer.getAnimationState();
-        const skel = viewer.getSkeletonEditorState();
+        const skel = viewer.getSkeletonEditorState({ includeKeyframes: false });
 
         if (animState.hasAnimations) {
             statusFrame.hidden = false;
@@ -1600,7 +1600,7 @@ function renderAnimationClipList(state: AnimationPlaybackState): void {
 }
 
 function syncAnimationClipTools(state: AnimationPlaybackState): void {
-    const hasSkeleton = viewer.getSkeletonEditorState().hasSkeleton;
+    const hasSkeleton = viewer.getSkeletonEditorState({ includeKeyframes: false }).hasSkeleton;
     btnNewTposeClip.disabled = !hasSkeleton;
     btnCopyClipKeys.disabled = !state.hasAnimations || state.activeIndex < 0;
     btnPasteClipKeys.disabled = !animationClipboard;
@@ -1713,6 +1713,7 @@ function openAnimationInspector(): void {
     applyInspectorState();
     persistLayout();
     viewer.setSkeletonVisible(true);
+    syncActiveInspectorControls();
 }
 
 function setBoneTransformMode(mode: BoneTransformMode): void {
@@ -3641,7 +3642,7 @@ function commitBonePoseUndo(snapshot: BonePoseSnapshot | null, label: string): v
 }
 
 function getBonePoseEditLabel(): string {
-    const state = viewer.getSkeletonEditorState();
+    const state = viewer.getSkeletonEditorState({ includeKeyframes: false });
     const action = state.ikEnabled
         ? 'IK 调整'
         : state.transformMode === 'translate'
@@ -4075,11 +4076,7 @@ function activateDocument(id: string, options: { fit?: boolean } = {}): void {
     syncDocumentState();
     scheduleRefreshStats();
     refreshButtons();
-    syncPropertyPanel();
-    syncMaterialControls();
-    syncTextureInspector();
-    syncAnimationEditor();
-    syncPropertyPanelCamera();
+    syncActiveInspectorControls();
 }
 
 function closeDocument(id: string): void {
@@ -4108,9 +4105,7 @@ function closeDocument(id: string): void {
         syncDocumentState();
         scheduleRefreshStats();
         refreshButtons();
-        syncPropertyPanel();
-        syncMaterialControls();
-        syncTextureInspector();
+        syncActiveInspectorControls();
     }
 
     if (closing.root) viewer.disposeModel(closing.root);
@@ -4143,9 +4138,7 @@ function clearActiveDocument(): void {
     syncDocumentState();
     scheduleRefreshStats();
     refreshButtons();
-    syncPropertyPanel();
-    syncMaterialControls();
-    syncTextureInspector();
+    syncActiveInspectorControls();
     showToast('已恢复内置示例', 'success');
 }
 
@@ -4610,7 +4603,7 @@ function syncPropertyPanelCamera(): void {
     propCameraTarget.textContent = formatVector(camera.target);
 }
 
-function syncMaterialControls(): void {
+function syncMaterialControls(options: { syncTextures?: boolean } = {}): void {
     const state = viewer.getMaterialState();
     const disabled = !state.hasMaterial;
 
@@ -4640,7 +4633,7 @@ function syncMaterialControls(): void {
         input.disabled = disabled;
     });
 
-    syncTextureInspector();
+    if (options.syncTextures ?? true) syncTextureInspector();
 }
 
 function syncTextureInspector(): void {
@@ -6150,6 +6143,19 @@ function applyInspectorState(): void {
         if (!id) return;
         group.open = layoutState.groups[id] ?? true;
     });
+}
+
+function syncActiveInspectorControls(): void {
+    syncPropertyPanel();
+
+    if (layoutState.activeTab === 'animation') {
+        syncAnimationEditor();
+    } else if (layoutState.activeTab === 'textures') {
+        syncTextureInspector();
+    } else if (layoutState.activeTab === 'properties') {
+        syncPropertyPanelCamera();
+        syncMaterialControls({ syncTextures: false });
+    }
 }
 
 function persistLayout(): void {
