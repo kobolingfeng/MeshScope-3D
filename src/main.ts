@@ -1563,6 +1563,7 @@ function refreshAnimationBar(state: AnimationPlaybackState): void {
         animBar.hidden = true;
         animBar.classList.remove('is-playing');
         animationClipListRenderKey = '';
+        timelineStripRenderKey = '';
         animClipList.innerHTML = '';
         animTimeRange.value = '0';
         animTimeRange.max = '0';
@@ -2001,24 +2002,53 @@ function syncBoneSolverModeButtons(ikEnabled: boolean): void {
 }
 
 let timelineRenderRaf = 0;
+let timelineStripRenderKey = '';
 
 function renderAnimationTimeline(
-    _skeletonState: SkeletonEditorState,
+    skeletonState: SkeletonEditorState,
     playbackState: AnimationPlaybackState,
 ): void {
     // Playhead tracks the cursor every call — no rAF gating.
     updateTimelinePlayhead(playbackState);
+    const renderKey = getTimelineStripRenderKey(skeletonState, playbackState);
+    if (renderKey === timelineStripRenderKey) return;
     // The expensive strip rebuild is coalesced to one per frame. retime
     // drag fires this on every pointer-move; without coalescing 500-keyframe
     // clips stutter.
     if (timelineRenderRaf) return;
     timelineRenderRaf = requestAnimationFrame(() => {
         timelineRenderRaf = 0;
+        const nextSkeletonState = viewer.getSkeletonEditorState();
+        const nextPlaybackState = viewer.getAnimationState();
+        const nextRenderKey = getTimelineStripRenderKey(nextSkeletonState, nextPlaybackState);
+        if (nextRenderKey === timelineStripRenderKey) return;
+        timelineStripRenderKey = nextRenderKey;
         renderAnimationTimelineNow(
-            viewer.getSkeletonEditorState(),
-            viewer.getAnimationState(),
+            nextSkeletonState,
+            nextPlaybackState,
         );
     });
+}
+
+function getTimelineStripRenderKey(
+    skeletonState: SkeletonEditorState,
+    playbackState: AnimationPlaybackState,
+): string {
+    const keyframes = skeletonState.keyframes
+        .map((marker) => `${marker.time.toFixed(4)}${marker.selectedBone ? 'b' : ''}`)
+        .join(',');
+    const selection = selectedKeyframeTimes
+        .map((time) => time.toFixed(4))
+        .join(',');
+    return [
+        playbackState.duration.toFixed(4),
+        timelineZoom.toFixed(3),
+        timelineFps,
+        timelineSnapEnabled ? 1 : 0,
+        timelineRetimePreviewDelta.toFixed(4),
+        selection,
+        keyframes,
+    ].join('|');
 }
 
 function renderAnimationTimelineNow(
