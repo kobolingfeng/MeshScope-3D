@@ -203,6 +203,7 @@ export type AnimationEasingCurve = [number, number, number, number];
 export type AnimationBlendMode = 'normal' | 'additive';
 export type BoneTransformMode = 'translate' | 'rotate';
 export type BoneTransformSpace = 'local' | 'world';
+export type AutoKeyframeScope = 'selected' | 'chain' | 'all';
 
 export type SkeletonBoneMeta = {
     index: number;
@@ -230,6 +231,7 @@ export type SkeletonEditorState = {
     ikChainLength: number;
     ikIterations: number;
     autoKeyframeEnabled: boolean;
+    autoKeyframeScope: AutoKeyframeScope;
     keyframes: AnimationTimelineMarker[];
 };
 
@@ -382,6 +384,7 @@ export class Viewer {
     private boneRotationStepRadians = DEFAULT_BONE_ROTATION_STEP_RADIANS;
     private boneTranslationStepRatio = DEFAULT_BONE_TRANSLATION_STEP_RATIO;
     private autoKeyframeEnabled = true;
+    private autoKeyframeScope: AutoKeyframeScope = 'selected';
     private keyframeSnapStep: number | null = 1 / 30;
     private transformDragging = false;
     private transformChangedDuringDrag = false;
@@ -1257,6 +1260,7 @@ export class Viewer {
             ikChainLength: this.ikChainMaxLength,
             ikIterations: this.ikIterations,
             autoKeyframeEnabled: this.autoKeyframeEnabled,
+            autoKeyframeScope: this.autoKeyframeScope,
             keyframes: includeKeyframes ? this.getTimelineMarkers() : [],
         };
     }
@@ -1372,6 +1376,12 @@ export class Viewer {
         this.onSkeletonChanged(this.getSkeletonEditorState());
     }
 
+    setAutoKeyframeScope(scope: AutoKeyframeScope): void {
+        if (this.autoKeyframeScope === scope) return;
+        this.autoKeyframeScope = scope;
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+    }
+
     setKeyframeSnapStep(step: number | null): void {
         this.keyframeSnapStep = typeof step === 'number' && Number.isFinite(step) && step > 0
             ? step
@@ -1408,10 +1418,20 @@ export class Viewer {
         const clip = this.ensureActiveAnimationClip();
         if (!clip || !this.selectedBone) return false;
 
-        const targets = this.ikEnabled && this.ikChain.length > 0
-            ? [...new Set([this.selectedBone, ...this.ikChain])]
-            : [this.selectedBone];
+        const targets = this.getAutoKeyframeTargets();
         return this.autoKeyframeBonePoseTargets(clip, targets);
+    }
+
+    private getAutoKeyframeTargets(): Bone[] {
+        if (!this.selectedBone) return [];
+        if (this.autoKeyframeScope === 'all') return [...this.bones];
+
+        const targets = this.autoKeyframeScope === 'chain'
+            ? this.bones.filter((bone) => bone === this.selectedBone || this.isBoneDescendantOf(bone, this.selectedBone!))
+            : [this.selectedBone];
+
+        if (this.ikEnabled && this.ikChain.length > 0) targets.push(...this.ikChain);
+        return [...new Set(targets)];
     }
 
     private autoKeyframeBonePoseTargets(clip: AnimationClip, targets: Bone[]): boolean {

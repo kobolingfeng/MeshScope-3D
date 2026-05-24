@@ -7,6 +7,7 @@ import {
     type AnimationLibrarySnapshot,
     type AnimationPlaybackState,
     type AnimationTrackMeta,
+    type AutoKeyframeScope,
     type BonePoseSnapshot,
     type BoneTransformMode,
     type BoneTransformSpace,
@@ -292,6 +293,7 @@ const animSpaceWorld = $<HTMLButtonElement>('anim-space-world');
 const animFkMode = $<HTMLButtonElement>('anim-fk-mode');
 const animIkMode = $<HTMLButtonElement>('anim-ik-mode');
 const animAutoKeyframeInput = $<HTMLInputElement>('anim-auto-keyframe');
+const animAutoKeyframeScope = $<HTMLSelectElement>('anim-auto-keyframe-scope');
 const animIkChainLengthInput = $<HTMLInputElement>('anim-ik-chain-length');
 const animIkIterationsInput = $<HTMLInputElement>('anim-ik-iterations');
 const animRotationStepInput = $<HTMLInputElement>('anim-rotation-step');
@@ -1700,6 +1702,11 @@ function setupAnimationControls(): void {
         syncAnimationEditor();
     });
 
+    animAutoKeyframeScope.addEventListener('change', () => {
+        viewer.setAutoKeyframeScope(animAutoKeyframeScope.value as AutoKeyframeScope);
+        syncAnimationEditor();
+    });
+
     animIkChainLengthInput.addEventListener('change', () => {
         const value = Number(animIkChainLengthInput.value);
         const length = Number.isFinite(value) ? clamp(value, 1, 12) : 4;
@@ -2449,6 +2456,10 @@ function renderSkeletonControls(
     animIkMode.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animAutoKeyframeInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animAutoKeyframeInput.checked = state.autoKeyframeEnabled;
+    animAutoKeyframeScope.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !state.autoKeyframeEnabled;
+    if (animAutoKeyframeScope.value !== state.autoKeyframeScope) {
+        animAutoKeyframeScope.value = state.autoKeyframeScope;
+    }
     animIkChainLengthInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !state.ikEnabled;
     animIkIterationsInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !state.ikEnabled;
     animRotationStepInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;

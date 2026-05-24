@@ -507,6 +507,14 @@
                                     <input id="anim-auto-keyframe" type="checkbox" checked disabled>
                                     <span class="control-label">自动键</span>
                                 </label>
+                                <label class="uv-inline-toggle" title="自动打关键帧时写入哪些骨骼">
+                                    <span class="control-label">范围</span>
+                                    <select id="anim-auto-keyframe-scope" class="mini-input" disabled>
+                                        <option value="selected">当前</option>
+                                        <option value="chain">子链</option>
+                                        <option value="all">全身</option>
+                                    </select>
+                                </label>
                                 <label class="uv-inline-toggle">
                                     <span class="control-label">链长</span>
                                     <input id="anim-ik-chain-length" class="mini-input" type="number" min="1" max="12" step="1" value="4" disabled>
