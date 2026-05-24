@@ -1560,26 +1560,26 @@ export class Viewer {
         return Math.max(0, Number((Math.round(raw / step) * step).toFixed(6)));
     }
 
-    deleteSelectedBoneKeyframe(): void {
+    deleteSelectedBoneKeyframe(): boolean {
         const clip = this.animClips[this.activeClipIndex];
-        if (!clip || !this.selectedBone) return;
+        if (!clip || !this.selectedBone) return false;
 
         const time = this.activeAction?.time ?? 0;
-        this.deleteSelectedBoneKeyframesAtTimes([time]);
+        return this.deleteSelectedBoneKeyframesAtTimes([time]);
     }
 
-    deleteSelectedBoneKeyframesAtTimes(times: number[]): void {
-        if (!this.selectedBone) return;
-        this.deleteKeyframesAtTimesInternal(times, this.selectedBone);
+    deleteSelectedBoneKeyframesAtTimes(times: number[]): boolean {
+        if (!this.selectedBone) return false;
+        return this.deleteKeyframesAtTimesInternal(times, this.selectedBone);
     }
 
-    deleteKeyframesAtTimes(times: number[]): void {
-        this.deleteKeyframesAtTimesInternal(times, null);
+    deleteKeyframesAtTimes(times: number[]): boolean {
+        return this.deleteKeyframesAtTimesInternal(times, null);
     }
 
-    private deleteKeyframesAtTimesInternal(times: number[], bone: Bone | null): void {
+    private deleteKeyframesAtTimesInternal(times: number[], bone: Bone | null): boolean {
         const clip = this.animClips[this.activeClipIndex];
-        if (!clip || times.length === 0) return;
+        if (!clip || times.length === 0) return false;
 
         const tolerance = Math.max(1e-4, ((this.keyframeSnapStep ?? 1 / 30) * 0.5) + 1e-6);
         let changed = false;
@@ -1601,6 +1601,7 @@ export class Viewer {
             this.refreshActiveAnimationAfterEdit(this.activeClipIndex);
             this.onSkeletonChanged(this.getSkeletonEditorState());
         }
+        return changed;
     }
 
     moveSelectedBoneKeyframesAtTimes(fromTimes: number[], toTimes: number[]): void {

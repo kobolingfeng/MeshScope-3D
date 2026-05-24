@@ -1480,20 +1480,22 @@ function setupKeyboardShortcuts(): void {
             if (selectedKeyframeTimes.length > 0) {
                 event.preventDefault();
                 const count = selectedKeyframeTimes.length;
+                let changed = false;
                 runAnimationEdit('删除选中关键帧', () => {
-                    deleteTimelineKeyframesAtTimes(selectedKeyframeTimes);
+                    changed = deleteTimelineKeyframesAtTimes(selectedKeyframeTimes);
                 });
                 selectedKeyframeTimes = [];
                 renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
-                showToast(`已删除 ${count} 个选中关键帧`, 'success');
+                showToast(changed ? `已删除 ${count} 个选中关键帧` : '没有匹配的关键帧可删除', changed ? 'success' : 'info');
                 return;
             }
             if (viewer.getSelectedBoneLocalTrs()) {
                 event.preventDefault();
+                let changed = false;
                 runAnimationEdit('删除关键帧', () => {
-                    viewer.deleteSelectedBoneKeyframe();
+                    changed = viewer.deleteSelectedBoneKeyframe();
                 });
-                showToast('已删除当前附近关键帧', 'success');
+                showToast(changed ? '已删除当前附近关键帧' : '当前附近没有关键帧', changed ? 'success' : 'info');
                 return;
             }
         }
@@ -2040,16 +2042,18 @@ function setupAnimationControls(): void {
     btnDeleteKeyframe.addEventListener('click', () => {
         if (selectedKeyframeTimes.length > 0) {
             const count = selectedKeyframeTimes.length;
+            let changed = false;
             runAnimationEdit('删除选中关键帧', () => {
-                deleteTimelineKeyframesAtTimes(selectedKeyframeTimes);
+                changed = deleteTimelineKeyframesAtTimes(selectedKeyframeTimes);
             });
             selectedKeyframeTimes = [];
-            showToast(`已删除 ${count} 个选中关键帧`, 'success');
+            showToast(changed ? `已删除 ${count} 个选中关键帧` : '没有匹配的关键帧可删除', changed ? 'success' : 'info');
         } else {
+            let changed = false;
             runAnimationEdit('删除关键帧', () => {
-                viewer.deleteSelectedBoneKeyframe();
+                changed = viewer.deleteSelectedBoneKeyframe();
             });
-            showToast('已删除当前附近关键帧', 'success');
+            showToast(changed ? '已删除当前附近关键帧' : '当前附近没有关键帧', changed ? 'success' : 'info');
         }
     });
 
@@ -3337,9 +3341,10 @@ function moveTimelineKeyframesAtTimes(fromTimes: number[], toTimes: number[]): v
     else viewer.moveKeyframesAtTimes(fromTimes, toTimes);
 }
 
-function deleteTimelineKeyframesAtTimes(times: number[]): void {
-    if (timelineSelectedBoneOnly) viewer.deleteSelectedBoneKeyframesAtTimes(times);
-    else viewer.deleteKeyframesAtTimes(times);
+function deleteTimelineKeyframesAtTimes(times: number[]): boolean {
+    return timelineSelectedBoneOnly
+        ? viewer.deleteSelectedBoneKeyframesAtTimes(times)
+        : viewer.deleteKeyframesAtTimes(times);
 }
 
 function handleTimelineWheel(event: WheelEvent): void {
