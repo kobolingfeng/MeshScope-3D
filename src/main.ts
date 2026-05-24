@@ -3017,13 +3017,20 @@ function findPreferredTrackForSelectedBone(
     const selectedName = normalizeSearchText(skeletonState.selectedBoneName);
     const matches = state.tracks.filter((track) => (
         track.editable
-        && normalizeSearchText(track.target) === selectedName
+        && trackTargetMatchesSelectedBone(track.target, selectedName)
     ));
     if (matches.length === 0) return null;
     return matches.find((track) => track.property === 'quaternion')
         ?? matches.find((track) => track.property === 'position')
         ?? matches.find((track) => track.property === 'scale')
         ?? matches[0];
+}
+
+function trackTargetMatchesSelectedBone(target: string, selectedName: string): boolean {
+    const normalizedTarget = normalizeSearchText(target);
+    return normalizedTarget === selectedName
+        || normalizedTarget.endsWith(`.${selectedName}`)
+        || normalizedTarget.endsWith(`/${selectedName}`);
 }
 
 function syncBoneTransformFields(state: SkeletonEditorState): void {
