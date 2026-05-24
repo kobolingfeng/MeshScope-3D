@@ -225,10 +225,12 @@ export type SkeletonEditorState = {
     bones: SkeletonBoneMeta[];
     selectedBoneIndex: number;
     selectedBoneName: string;
+    selectedBoneDescendantCount: number;
     transformMode: BoneTransformMode;
     transformSpace: BoneTransformSpace;
     ikEnabled: boolean;
     ikChainLength: number;
+    ikChainActiveLength: number;
     ikIterations: number;
     autoKeyframeEnabled: boolean;
     autoKeyframeScope: AutoKeyframeScope;
@@ -1286,10 +1288,14 @@ export class Viewer {
             })),
             selectedBoneIndex: selectedIndex,
             selectedBoneName: selectedName,
+            selectedBoneDescendantCount: this.selectedBone
+                ? this.bones.filter((bone) => this.isBoneDescendantOf(bone, this.selectedBone!)).length
+                : 0,
             transformMode: this.boneTransformMode,
             transformSpace: this.boneTransformSpace,
             ikEnabled: this.ikEnabled,
             ikChainLength: this.ikChainMaxLength,
+            ikChainActiveLength: this.ikChain.length,
             ikIterations: this.ikIterations,
             autoKeyframeEnabled: this.autoKeyframeEnabled,
             autoKeyframeScope: this.autoKeyframeScope,

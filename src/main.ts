@@ -286,6 +286,7 @@ const animShowTransformInput = $<HTMLInputElement>('anim-show-transform');
 const animBoneSearch = $<HTMLInputElement>('anim-bone-search');
 const animBoneList = $('anim-bone-list');
 const animSelectedBone = $('anim-selected-bone');
+const animBoneInfluence = $('anim-bone-influence');
 const btnFrameSelectedBone = $<HTMLButtonElement>('btn-frame-selected-bone');
 const btnSelectMirrorBone = $<HTMLButtonElement>('btn-select-mirror-bone');
 const animModeTranslate = $<HTMLButtonElement>('anim-mode-translate');
@@ -2805,6 +2806,10 @@ function renderSkeletonControls(
     btnResetAllBonesPose.disabled = !state.hasSkeleton;
     btnMirrorAllBonesPose.disabled = !state.hasSkeleton;
     animSelectedBone.textContent = state.selectedBoneName || '—';
+    animBoneInfluence.textContent = getBoneInfluenceLabel(state);
+    animBoneInfluence.title = state.ikEnabled
+        ? 'IK 会反解当前骨骼的父级链'
+        : 'FK 会让选中骨骼的全部子级继承旋转或移动';
     btnFrameSelectedBone.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnSelectMirrorBone.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     syncBoneSolverModeButtons(state.ikEnabled);
@@ -2833,6 +2838,12 @@ function renderSkeletonControls(
         }).join('')
         : '<div class="animation-list-empty">没有匹配骨骼</div>';
     scrollSelectedBoneIntoView(state.selectedBoneIndex);
+}
+
+function getBoneInfluenceLabel(state: SkeletonEditorState): string {
+    if (!state.hasSkeleton || state.selectedBoneIndex < 0) return '—';
+    if (state.ikEnabled) return `IK 链 ${state.ikChainActiveLength}`;
+    return `FK 子级 ${state.selectedBoneDescendantCount}`;
 }
 
 function scrollSelectedBoneIntoView(index: number): void {
