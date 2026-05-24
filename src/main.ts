@@ -424,6 +424,12 @@ const timelineDragState: {
 
 const viewer = new Viewer(canvas);
 
+const AUTO_KEY_SCOPE_LABELS: Record<AutoKeyframeScope, string> = {
+    selected: '当前',
+    chain: '子链',
+    all: '全身',
+};
+
 let layoutState = loadLayout();
 let documents: DocumentSession[] = [createSampleDocument()];
 let activeDocumentId = documents[0].id;
@@ -1392,6 +1398,12 @@ function setupKeyboardShortcuts(): void {
         if (lowerKey === 'm' && viewer.getSelectedBoneLocalTrs()) {
             event.preventDefault();
             mirrorSelectedBonePose();
+            return;
+        }
+
+        if (lowerKey === 'y' && viewer.getSelectedBoneLocalTrs()) {
+            event.preventDefault();
+            cycleAutoKeyframeScope();
             return;
         }
 
@@ -2558,6 +2570,16 @@ function setBoneTransformSpace(space: BoneTransformSpace): void {
 function setBoneSolverMode(ikEnabled: boolean): void {
     viewer.setIkEnabled(ikEnabled);
     syncAnimationEditor();
+}
+
+function cycleAutoKeyframeScope(): void {
+    const state = viewer.getSkeletonEditorState({ includeKeyframes: false });
+    const scopes: AutoKeyframeScope[] = ['selected', 'chain', 'all'];
+    const currentIndex = Math.max(0, scopes.indexOf(state.autoKeyframeScope));
+    const next = scopes[(currentIndex + 1) % scopes.length];
+    viewer.setAutoKeyframeScope(next);
+    syncAnimationEditor();
+    showToast(`自动键范围: ${AUTO_KEY_SCOPE_LABELS[next]}`, 'success');
 }
 
 function syncAnimationEditor(): void {
