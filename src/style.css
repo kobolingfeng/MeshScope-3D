@@ -987,6 +987,18 @@ summary:focus-visible,
     gap: 8px;
 }
 
+.bone-transform-panel {
+    padding: 8px;
+    border: 1px solid var(--line-base);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.62);
+}
+
+.bone-transform-row {
+    display: grid;
+    gap: 6px;
+}
+
 .animation-toolbar,
 .animation-keyframe-actions {
     display: flex;

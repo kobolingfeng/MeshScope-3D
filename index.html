@@ -562,6 +562,62 @@
                                 <button id="btn-mirror-all-bones-pose" class="mini-btn" type="button" title="左右镜像当前全身姿态 (Alt+Shift+M)" disabled>镜像全身</button>
                                 <button id="btn-mirror-animation" class="mini-btn" type="button" disabled>镜像动画</button>
                             </div>
+                            <div class="animation-vector-panel bone-transform-panel" id="anim-bone-transform-panel">
+                                <div class="bone-transform-row">
+                                    <span class="control-label">本地位移</span>
+                                    <div class="vector-input-row">
+                                        <label class="vector-input">
+                                            <span>X</span>
+                                            <input id="bone-pos-x" class="mini-input" type="number" step="0.001" value="0" disabled>
+                                        </label>
+                                        <label class="vector-input">
+                                            <span>Y</span>
+                                            <input id="bone-pos-y" class="mini-input" type="number" step="0.001" value="0" disabled>
+                                        </label>
+                                        <label class="vector-input">
+                                            <span>Z</span>
+                                            <input id="bone-pos-z" class="mini-input" type="number" step="0.001" value="0" disabled>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="bone-transform-row">
+                                    <span class="control-label">本地旋转</span>
+                                    <div class="vector-input-row">
+                                        <label class="vector-input">
+                                            <span>X</span>
+                                            <input id="bone-rot-x" class="mini-input" type="number" step="0.1" value="0" disabled>
+                                        </label>
+                                        <label class="vector-input">
+                                            <span>Y</span>
+                                            <input id="bone-rot-y" class="mini-input" type="number" step="0.1" value="0" disabled>
+                                        </label>
+                                        <label class="vector-input">
+                                            <span>Z</span>
+                                            <input id="bone-rot-z" class="mini-input" type="number" step="0.1" value="0" disabled>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="bone-transform-row">
+                                    <span class="control-label">本地缩放</span>
+                                    <div class="vector-input-row">
+                                        <label class="vector-input">
+                                            <span>X</span>
+                                            <input id="bone-scale-x" class="mini-input" type="number" step="0.001" value="1" disabled>
+                                        </label>
+                                        <label class="vector-input">
+                                            <span>Y</span>
+                                            <input id="bone-scale-y" class="mini-input" type="number" step="0.001" value="1" disabled>
+                                        </label>
+                                        <label class="vector-input">
+                                            <span>Z</span>
+                                            <input id="bone-scale-z" class="mini-input" type="number" step="0.001" value="1" disabled>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="control-actions">
+                                    <button id="btn-apply-bone-transform" class="mini-btn" type="button" disabled>应用骨骼数值</button>
+                                </div>
+                            </div>
                             <div class="animation-history-panel">
                                 <div class="animation-history-header">
                                     <strong>操作历史</strong>

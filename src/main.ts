@@ -1,4 +1,4 @@
-import { BoxGeometry, Mesh, MeshStandardMaterial, type Object3D } from 'three';
+import { BoxGeometry, Euler, Mesh, MeshStandardMaterial, Quaternion, type Object3D } from 'three';
 import {
     type AnimationBlendMode,
     type AnimationClipSnapshot,
@@ -322,6 +322,17 @@ const btnMirrorBonePose = $<HTMLButtonElement>('btn-mirror-bone-pose');
 const btnMirrorBoneChainPose = $<HTMLButtonElement>('btn-mirror-bone-chain-pose');
 const btnMirrorAllBonesPose = $<HTMLButtonElement>('btn-mirror-all-bones-pose');
 const btnMirrorAnimation = $<HTMLButtonElement>('btn-mirror-animation');
+const boneTransformPanel = $('anim-bone-transform-panel');
+const bonePosXInput = $<HTMLInputElement>('bone-pos-x');
+const bonePosYInput = $<HTMLInputElement>('bone-pos-y');
+const bonePosZInput = $<HTMLInputElement>('bone-pos-z');
+const boneRotXInput = $<HTMLInputElement>('bone-rot-x');
+const boneRotYInput = $<HTMLInputElement>('bone-rot-y');
+const boneRotZInput = $<HTMLInputElement>('bone-rot-z');
+const boneScaleXInput = $<HTMLInputElement>('bone-scale-x');
+const boneScaleYInput = $<HTMLInputElement>('bone-scale-y');
+const boneScaleZInput = $<HTMLInputElement>('bone-scale-z');
+const btnApplyBoneTransform = $<HTMLButtonElement>('btn-apply-bone-transform');
 const btnAnimHistoryUndo = $<HTMLButtonElement>('btn-anim-history-undo');
 const btnAnimHistoryRedo = $<HTMLButtonElement>('btn-anim-history-redo');
 const animHistoryList = $('anim-history-list');
@@ -407,6 +418,7 @@ let timelineFps = 30;
 let timelineRetimePreviewDelta = 0;
 let boneStepUndoTimer = 0;
 let boneStepUndoOpen = false;
+let boneTransformInputSyncing = false;
 let statsRefreshRaf = 0;
 let animationEasingCurve: AnimationEasingCurve = [...ANIMATION_EASING_CURVES['ease-in-out']];
 let animationEasingDragHandle: 1 | 2 | null = null;
@@ -1998,6 +2010,18 @@ function setupAnimationControls(): void {
         void mirrorActiveAnimationClip();
     });
 
+    btnApplyBoneTransform.addEventListener('click', () => {
+        applyBoneTransformFields();
+    });
+    for (const input of getBoneTransformInputs()) {
+        input.addEventListener('change', () => applyBoneTransformFields());
+        input.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            applyBoneTransformFields();
+        });
+    }
+
     btnAnimHistoryUndo.addEventListener('click', () => {
         undoLastEdit();
     });
@@ -2849,6 +2873,7 @@ function renderSkeletonControls(
         : 'FK 会让选中骨骼的全部子级继承旋转或移动';
     btnFrameSelectedBone.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnSelectMirrorBone.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    syncBoneTransformFields(state);
     syncBoneSolverModeButtons(state.ikEnabled);
     syncTransformModeButtons(state.transformMode);
     syncTransformSpaceButtons(state.transformSpace);
@@ -2881,6 +2906,105 @@ function getBoneInfluenceLabel(state: SkeletonEditorState): string {
     if (!state.hasSkeleton || state.selectedBoneIndex < 0) return '—';
     if (state.ikEnabled) return `IK 链 ${state.ikChainActiveLength}`;
     return `FK 子级 ${state.selectedBoneDescendantCount}`;
+}
+
+function syncBoneTransformFields(state: SkeletonEditorState): void {
+    const inputs = getBoneTransformInputs();
+    const enabled = state.hasSkeleton && state.selectedBoneIndex >= 0;
+    for (const input of inputs) input.disabled = !enabled;
+    btnApplyBoneTransform.disabled = !enabled;
+    if (!enabled) return;
+    if (document.activeElement instanceof HTMLElement && boneTransformPanel.contains(document.activeElement)) return;
+
+    const trs = viewer.getSelectedBoneLocalTrs();
+    if (!trs) return;
+
+    const rotation = new Euler().setFromQuaternion(new Quaternion(...trs.quaternion), 'XYZ');
+    boneTransformInputSyncing = true;
+    try {
+        setNumberInputValue(bonePosXInput, trs.position[0], 4);
+        setNumberInputValue(bonePosYInput, trs.position[1], 4);
+        setNumberInputValue(bonePosZInput, trs.position[2], 4);
+        setNumberInputValue(boneRotXInput, radiansToDegrees(rotation.x), 2);
+        setNumberInputValue(boneRotYInput, radiansToDegrees(rotation.y), 2);
+        setNumberInputValue(boneRotZInput, radiansToDegrees(rotation.z), 2);
+        setNumberInputValue(boneScaleXInput, trs.scale[0], 4);
+        setNumberInputValue(boneScaleYInput, trs.scale[1], 4);
+        setNumberInputValue(boneScaleZInput, trs.scale[2], 4);
+    } finally {
+        boneTransformInputSyncing = false;
+    }
+}
+
+function getBoneTransformInputs(): HTMLInputElement[] {
+    return [
+        bonePosXInput,
+        bonePosYInput,
+        bonePosZInput,
+        boneRotXInput,
+        boneRotYInput,
+        boneRotZInput,
+        boneScaleXInput,
+        boneScaleYInput,
+        boneScaleZInput,
+    ];
+}
+
+function setNumberInputValue(input: HTMLInputElement, value: number, digits: number): void {
+    input.value = Number.isFinite(value) ? value.toFixed(digits) : '0';
+}
+
+function readBoneTransformNumber(input: HTMLInputElement, fallback: number): number {
+    const value = Number(input.value);
+    return Number.isFinite(value) ? value : fallback;
+}
+
+function radiansToDegrees(value: number): number {
+    return value * 180 / Math.PI;
+}
+
+function degreesToRadians(value: number): number {
+    return value * Math.PI / 180;
+}
+
+function applyBoneTransformFields(): void {
+    if (boneTransformInputSyncing) return;
+    flushBoneStepUndoTransaction();
+    const current = viewer.getSelectedBoneLocalTrs();
+    if (!current) {
+        showToast('没有选中骨骼', 'info');
+        return;
+    }
+
+    const position: [number, number, number] = [
+        readBoneTransformNumber(bonePosXInput, current.position[0]),
+        readBoneTransformNumber(bonePosYInput, current.position[1]),
+        readBoneTransformNumber(bonePosZInput, current.position[2]),
+    ];
+    const rotation = new Euler(
+        degreesToRadians(readBoneTransformNumber(boneRotXInput, 0)),
+        degreesToRadians(readBoneTransformNumber(boneRotYInput, 0)),
+        degreesToRadians(readBoneTransformNumber(boneRotZInput, 0)),
+        'XYZ',
+    );
+    const quaternion = new Quaternion().setFromEuler(rotation);
+    const scale: [number, number, number] = [
+        readBoneTransformNumber(boneScaleXInput, current.scale[0]),
+        readBoneTransformNumber(boneScaleYInput, current.scale[1]),
+        readBoneTransformNumber(boneScaleZInput, current.scale[2]),
+    ];
+
+    runAnimationEdit('骨骼数值变换', () => {
+        viewer.applyLocalTrsToBone(
+            { boneIndex: current.boneIndex, boneName: current.boneName },
+            {
+                position,
+                quaternion: [quaternion.x, quaternion.y, quaternion.z, quaternion.w],
+                scale,
+            },
+        );
+    });
+    showToast(`已应用 ${current.boneName || '骨骼'} 数值`, 'success');
 }
 
 function scrollSelectedBoneIntoView(index: number): void {
