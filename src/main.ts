@@ -308,6 +308,7 @@ const btnInsertAllBonesKeyframe = $<HTMLButtonElement>('btn-insert-all-bones-key
 const btnDeleteKeyframe = $<HTMLButtonElement>('btn-delete-keyframe');
 const btnResetBonePose = $<HTMLButtonElement>('btn-reset-bone-pose');
 const btnResetBoneChainPose = $<HTMLButtonElement>('btn-reset-bone-chain-pose');
+const btnResetAllBonesPose = $<HTMLButtonElement>('btn-reset-all-bones-pose');
 const btnCopyBonePose = $<HTMLButtonElement>('btn-copy-bone-pose');
 const btnPasteBonePose = $<HTMLButtonElement>('btn-paste-bone-pose');
 const btnCopyBoneChainPose = $<HTMLButtonElement>('btn-copy-bone-chain-pose');
@@ -1228,14 +1229,21 @@ function setupKeyboardShortcuts(): void {
             }
         }
 
-        if (event.altKey && !event.ctrlKey && !event.metaKey && lowerKey === 'r') {
+        if (event.altKey && lowerKey === 'r') {
             event.preventDefault();
             if (event.shiftKey) {
                 let count = 0;
-                runAnimationEdit('重置骨骼子链姿态', () => {
-                    count = viewer.resetSelectedBoneChainPose();
-                });
-                if (count > 0) showToast(`已重置 ${count} 根骨骼`, 'success');
+                if (event.ctrlKey || event.metaKey) {
+                    runAnimationEdit('重置全身姿态', () => {
+                        count = viewer.resetAllBonesPose();
+                    });
+                    if (count > 0) showToast(`已重置全身 ${count} 根骨骼`, 'success');
+                } else {
+                    runAnimationEdit('重置骨骼子链姿态', () => {
+                        count = viewer.resetSelectedBoneChainPose();
+                    });
+                    if (count > 0) showToast(`已重置 ${count} 根骨骼`, 'success');
+                }
             } else {
                 let changed = false;
                 runAnimationEdit('重置骨骼姿态', () => {
@@ -1837,6 +1845,14 @@ function setupAnimationControls(): void {
         showToast(count > 0 ? `已重置 ${count} 根骨骼` : '没有可重置的骨骼子链', count > 0 ? 'success' : 'info');
     });
 
+    btnResetAllBonesPose.addEventListener('click', () => {
+        let count = 0;
+        runAnimationEdit('重置全身姿态', () => {
+            count = viewer.resetAllBonesPose();
+        });
+        showToast(count > 0 ? `已重置全身 ${count} 根骨骼` : '没有可重置的骨骼', count > 0 ? 'success' : 'info');
+    });
+
     btnCopyBonePose.addEventListener('click', copySelectedBonePose);
     btnPasteBonePose.addEventListener('click', () => pasteBonePose({ mirror: false }));
     btnCopyBoneChainPose.addEventListener('click', copySelectedBoneChainPose);
@@ -2129,6 +2145,7 @@ function syncAnimationClipTools(state: AnimationPlaybackState): void {
     btnPasteClipKeys.disabled = !animationClipboard;
     btnResetBonePose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
     btnResetBoneChainPose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
+    btnResetAllBonesPose.disabled = !hasSkeleton;
     btnMirrorBonePose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
     btnMirrorBoneChainPose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
     btnMirrorAnimation.disabled = !hasSkeleton || !state.hasAnimations || state.activeIndex < 0;
@@ -2675,6 +2692,7 @@ function renderSkeletonControls(
     btnCopyBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnPasteBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !bonePoseClipboard;
     btnMirrorBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    btnResetAllBonesPose.disabled = !state.hasSkeleton;
     animSelectedBone.textContent = state.selectedBoneName || '—';
     btnFrameSelectedBone.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnSelectMirrorBone.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;

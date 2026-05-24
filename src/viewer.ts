@@ -2069,6 +2069,28 @@ export class Viewer {
         return changed;
     }
 
+    resetAllBonesPose(): number {
+        const targets = [...this.bones];
+        let changed = 0;
+        for (const bone of targets) {
+            const rest = this.boneRestPose.get(bone);
+            if (!rest) continue;
+            bone.position.copy(rest.position);
+            bone.quaternion.copy(rest.quaternion);
+            bone.scale.copy(rest.scale);
+            bone.updateMatrixWorld(true);
+            changed += 1;
+        }
+        if (changed === 0) return 0;
+        if (this.ikEnabled) this.solveIk();
+        this.refreshActiveRootMatrices();
+        this.updateSkeletonOverlay();
+        const clip = this.ensureActiveAnimationClip();
+        if (clip) this.autoKeyframeBonePoseTargets(clip, targets);
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+        return changed;
+    }
+
     stepSelectedBoneTransform(axis: 'x' | 'y' | 'z', direction: 1 | -1): boolean {
         const bone = this.selectedBone;
         if (!bone) return false;
