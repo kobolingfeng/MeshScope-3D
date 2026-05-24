@@ -1090,6 +1090,24 @@ function setupKeyboardShortcuts(): void {
             }
         }
 
+        if (event.altKey && !event.ctrlKey && !event.metaKey && lowerKey === 'r') {
+            event.preventDefault();
+            if (event.shiftKey) {
+                let count = 0;
+                runAnimationEdit('重置骨骼子链姿态', () => {
+                    count = viewer.resetSelectedBoneChainPose();
+                });
+                if (count > 0) showToast(`已重置 ${count} 根骨骼`, 'success');
+            } else {
+                let changed = false;
+                runAnimationEdit('重置骨骼姿态', () => {
+                    changed = viewer.resetSelectedBonePose();
+                });
+                if (changed) showToast('已重置当前骨骼姿态', 'success');
+            }
+            return;
+        }
+
         if (!noMods) return;
 
         const state = viewer.getAnimationState();
