@@ -308,7 +308,7 @@ export class Viewer {
     private boneMetaBase: Array<Omit<SkeletonBoneMeta, 'selected'>> = [];
     private selectedBone: Bone | null = null;
     private boneHandles = new Map<Bone, Mesh>();
-    private boneLines = new Map<Bone, Line>();
+    private boneLines = new Map<Bone, Line[]>();
     private handleToBone = new WeakMap<Object3D, Bone>();
     private lineToBone = new WeakMap<Object3D, Bone>();
     private boneHandleGeometry = new SphereGeometry(1, 16, 12);
@@ -1243,7 +1243,9 @@ export class Viewer {
         }
         if (this.skeletonHelper) this.skeletonHelper.visible = false;
         for (const handle of this.boneHandles.values()) handle.visible = visible;
-        for (const line of this.boneLines.values()) line.visible = visible;
+        for (const lines of this.boneLines.values()) {
+            for (const line of lines) line.visible = visible;
+        }
         this.attachTransformTarget();
         this.updateSkeletonOverlay();
         this.onSkeletonChanged(this.getSkeletonEditorState());
@@ -2165,18 +2167,23 @@ export class Viewer {
             this.handleToBone.set(handle, bone);
             this.scene.add(handle);
 
-            if (hasBoneSegment(bone)) {
-                const line = new Line(
-                    new BufferGeometry().setFromPoints([new Vector3(), new Vector3()]),
-                    this.boneLineMaterial,
-                );
-                line.name = `__bone_line__${bone.name}`;
-                line.renderOrder = 18;
-                line.visible = this.skeletonVisible;
-                line.userData.__boneLine = true;
-                this.boneLines.set(bone, line);
-                this.lineToBone.set(line, bone);
-                this.scene.add(line);
+            const segmentCount = getBoneSegmentCount(bone);
+            if (segmentCount > 0) {
+                const lines: Line[] = [];
+                this.boneLines.set(bone, lines);
+                for (let index = 0; index < segmentCount; index += 1) {
+                    const segmentLine = new Line(
+                        new BufferGeometry().setFromPoints([new Vector3(), new Vector3()]),
+                        this.boneLineMaterial,
+                    );
+                    segmentLine.name = `__bone_line__${bone.name}_${index}`;
+                    segmentLine.renderOrder = 18;
+                    segmentLine.visible = this.skeletonVisible;
+                    segmentLine.userData.__boneLine = true;
+                    lines.push(segmentLine);
+                    this.lineToBone.set(segmentLine, bone);
+                    this.scene.add(segmentLine);
+                }
             }
         }
 
@@ -2192,9 +2199,11 @@ export class Viewer {
         for (const handle of this.boneHandles.values()) {
             this.scene.remove(handle);
         }
-        for (const line of this.boneLines.values()) {
-            this.scene.remove(line);
-            line.geometry.dispose();
+        for (const lines of this.boneLines.values()) {
+            for (const line of lines) {
+                this.scene.remove(line);
+                line.geometry.dispose();
+            }
         }
         this.boneHandles.clear();
         this.boneLines.clear();
@@ -2218,17 +2227,23 @@ export class Viewer {
                 handle.visible = this.skeletonVisible;
             }
 
-            const line = this.boneLines.get(bone);
-            if (!line) continue;
+            const lines = this.boneLines.get(bone);
+            if (!lines || lines.length === 0) continue;
+            const children = getBoneChildren(bone);
             bone.getWorldPosition(start);
-            getBoneTailWorldPosition(bone, end, scale * 2.4);
-            const positions = line.geometry.getAttribute('position') as BufferAttribute;
-            positions.setXYZ(0, start.x, start.y, start.z);
-            positions.setXYZ(1, end.x, end.y, end.z);
-            positions.needsUpdate = true;
-            line.geometry.computeBoundingSphere();
-            line.material = this.getBoneLineMaterial(bone);
-            line.visible = this.skeletonVisible;
+            for (let index = 0; index < lines.length; index += 1) {
+                const line = lines[index];
+                const child = children[index];
+                if (child) child.getWorldPosition(end);
+                else getLeafBoneTailWorldPosition(bone, end, scale * 2.4);
+                const positions = line.geometry.getAttribute('position') as BufferAttribute;
+                positions.setXYZ(0, start.x, start.y, start.z);
+                positions.setXYZ(1, end.x, end.y, end.z);
+                positions.needsUpdate = true;
+                line.geometry.computeBoundingSphere();
+                line.material = this.getBoneLineMaterial(bone);
+                line.visible = this.skeletonVisible;
+            }
         }
         if (this.ikTarget && this.ikTargetMesh) {
             this.ikTargetMesh.position.copy(this.ikTarget.position);
@@ -2261,7 +2276,7 @@ export class Viewer {
         this.raycaster.params.Line.threshold = Math.max(this.getBoneHandleScale() * 1.8, 0.05);
         const hits = this.raycaster.intersectObjects([
             ...this.boneHandles.values(),
-            ...this.boneLines.values(),
+            ...this.getBoneLineObjects(),
         ], false);
         const hit = hits[0]?.object;
         if (!hit) return;
@@ -2271,6 +2286,12 @@ export class Viewer {
         event.preventDefault();
         event.stopPropagation();
         this.selectBone(this.bones.indexOf(bone));
+    }
+
+    private getBoneLineObjects(): Line[] {
+        const lines: Line[] = [];
+        for (const boneLines of this.boneLines.values()) lines.push(...boneLines);
+        return lines;
     }
 
     private isSelectedBoneDescendant(bone: Bone): boolean {
@@ -2529,19 +2550,13 @@ function getBoneChildren(bone: Bone): Bone[] {
     return bone.children.filter((child): child is Bone => (child as Bone).isBone);
 }
 
-function hasBoneSegment(bone: Bone): boolean {
-    return getBoneChildren(bone).length > 0 || Boolean(bone.parent && (bone.parent as Bone).isBone);
+function getBoneSegmentCount(bone: Bone): number {
+    const childCount = getBoneChildren(bone).length;
+    if (childCount > 0) return childCount;
+    return bone.parent && (bone.parent as Bone).isBone ? 1 : 0;
 }
 
-function getBoneTailWorldPosition(bone: Bone, target: Vector3, fallbackLength: number): Vector3 {
-    const children = getBoneChildren(bone);
-    if (children.length === 1) return children[0].getWorldPosition(target);
-    if (children.length > 1) {
-        target.set(0, 0, 0);
-        for (const child of children) target.add(child.getWorldPosition(new Vector3()));
-        return target.multiplyScalar(1 / children.length);
-    }
-
+function getLeafBoneTailWorldPosition(bone: Bone, target: Vector3, fallbackLength: number): Vector3 {
     const head = bone.getWorldPosition(new Vector3());
     if (bone.parent && (bone.parent as Bone).isBone) {
         const parent = bone.parent.getWorldPosition(new Vector3());
