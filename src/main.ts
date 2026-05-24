@@ -1268,6 +1268,28 @@ function setupKeyboardShortcuts(): void {
 
         const state = viewer.getAnimationState();
 
+        if (key === 'Delete' || key === 'Backspace') {
+            if (selectedKeyframeTimes.length > 0) {
+                event.preventDefault();
+                const count = selectedKeyframeTimes.length;
+                runAnimationEdit('删除选中关键帧', () => {
+                    deleteTimelineKeyframesAtTimes(selectedKeyframeTimes);
+                });
+                selectedKeyframeTimes = [];
+                renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+                showToast(`已删除 ${count} 个选中关键帧`, 'success');
+                return;
+            }
+            if (viewer.getSelectedBoneLocalTrs()) {
+                event.preventDefault();
+                runAnimationEdit('删除关键帧', () => {
+                    viewer.deleteSelectedBoneKeyframe();
+                });
+                showToast('已删除当前附近关键帧', 'success');
+                return;
+            }
+        }
+
         // Insert — insert selected-bone keyframe.
         if (key === 'Insert') {
             if (viewer.getSelectedBoneLocalTrs()) {
