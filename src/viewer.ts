@@ -1284,6 +1284,26 @@ export class Viewer {
         this.onSkeletonChanged(this.getSkeletonEditorState());
     }
 
+    selectParentBone(): boolean {
+        if (!this.selectedBone) return false;
+        const parent = this.selectedBone.parent;
+        if (!(parent instanceof Bone)) return false;
+        const index = this.bones.indexOf(parent);
+        if (index < 0) return false;
+        this.selectBone(index);
+        return true;
+    }
+
+    selectFirstChildBone(): boolean {
+        if (!this.selectedBone) return false;
+        const child = getBoneChildren(this.selectedBone)[0];
+        if (!child) return false;
+        const index = this.bones.indexOf(child);
+        if (index < 0) return false;
+        this.selectBone(index);
+        return true;
+    }
+
     setBoneTransformMode(mode: BoneTransformMode): void {
         this.boneTransformMode = mode;
         if (!this.ikEnabled) this.transformControls.setMode(mode);

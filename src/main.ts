@@ -1215,6 +1215,17 @@ function setupKeyboardShortcuts(): void {
             return;
         }
 
+        if (event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey && (key === 'ArrowUp' || key === 'ArrowDown')) {
+            const changed = key === 'ArrowUp'
+                ? viewer.selectParentBone()
+                : viewer.selectFirstChildBone();
+            if (changed) {
+                event.preventDefault();
+                syncAnimationEditor();
+            }
+            return;
+        }
+
         if (event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && lowerKey === 'k') {
             if (viewer.getSelectedBoneLocalTrs()) {
                 event.preventDefault();
