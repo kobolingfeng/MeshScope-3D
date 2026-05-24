@@ -1888,11 +1888,35 @@ export class Viewer {
             const bounds = this.getModelBounds();
             const maxDim = bounds ? Math.max(bounds.size.x, bounds.size.y, bounds.size.z) : 1;
             const step = Math.max(maxDim * this.boneTranslationStepRatio, 0.001);
-            bone.position[axis] += step * direction;
+            if (this.boneTransformSpace === 'world' && bone.parent) {
+                const worldPosition = new Vector3();
+                bone.getWorldPosition(worldPosition);
+                worldPosition[axis] += step * direction;
+                bone.parent.worldToLocal(worldPosition);
+                bone.position.copy(worldPosition);
+            } else {
+                bone.position[axis] += step * direction;
+            }
         } else {
-            const euler = new Euler().setFromQuaternion(bone.quaternion, 'XYZ');
-            euler[axis] += this.boneRotationStepRadians * direction;
-            bone.quaternion.setFromEuler(euler);
+            if (this.boneTransformSpace === 'world') {
+                const axisVector = new Vector3(
+                    axis === 'x' ? 1 : 0,
+                    axis === 'y' ? 1 : 0,
+                    axis === 'z' ? 1 : 0,
+                );
+                const delta = new Quaternion().setFromAxisAngle(axisVector, this.boneRotationStepRadians * direction);
+                const worldQuaternion = new Quaternion();
+                bone.getWorldQuaternion(worldQuaternion);
+                worldQuaternion.premultiply(delta);
+
+                const parentQuaternion = new Quaternion();
+                if (bone.parent) bone.parent.getWorldQuaternion(parentQuaternion);
+                bone.quaternion.copy(parentQuaternion.invert().multiply(worldQuaternion)).normalize();
+            } else {
+                const euler = new Euler().setFromQuaternion(bone.quaternion, 'XYZ');
+                euler[axis] += this.boneRotationStepRadians * direction;
+                bone.quaternion.setFromEuler(euler);
+            }
         }
 
         bone.updateMatrixWorld(true);
