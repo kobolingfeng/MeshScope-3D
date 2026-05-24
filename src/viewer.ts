@@ -2594,7 +2594,7 @@ export class Viewer {
         this.animClips = collected;
         this.refreshAnimationClipMetas();
         this.activeAction = null;
-        this.activeClipIndex = 0;
+        this.activeClipIndex = collected.findIndex((clip) => !getLazyAnimationClipSource(clip));
         this.animationPlaying = false;
         this.animationFinished = false;
         this.lastReportedTime = -1;
