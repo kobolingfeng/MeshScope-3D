@@ -279,7 +279,8 @@ const animBoneList = $('anim-bone-list');
 const animSelectedBone = $('anim-selected-bone');
 const animModeTranslate = $<HTMLButtonElement>('anim-mode-translate');
 const animModeRotate = $<HTMLButtonElement>('anim-mode-rotate');
-const animIkEnabledInput = $<HTMLInputElement>('anim-ik-enabled');
+const animFkMode = $<HTMLButtonElement>('anim-fk-mode');
+const animIkMode = $<HTMLButtonElement>('anim-ik-mode');
 const animKeyframeStrip = $('anim-keyframe-strip');
 const btnInsertKeyframe = $<HTMLButtonElement>('btn-insert-keyframe');
 const btnDeleteKeyframe = $<HTMLButtonElement>('btn-delete-keyframe');
@@ -1138,8 +1139,7 @@ function setupKeyboardShortcuts(): void {
         // Q — toggle IK.
         if (lowerKey === 'q') {
             event.preventDefault();
-            animIkEnabledInput.checked = !animIkEnabledInput.checked;
-            viewer.setIkEnabled(animIkEnabledInput.checked);
+            setBoneSolverMode(!viewer.getSkeletonEditorState({ includeKeyframes: false }).ikEnabled);
             return;
         }
 
@@ -1371,8 +1371,12 @@ function setupAnimationControls(): void {
         setBoneTransformMode('translate');
     });
 
-    animIkEnabledInput.addEventListener('change', () => {
-        viewer.setIkEnabled(animIkEnabledInput.checked);
+    animFkMode.addEventListener('click', () => {
+        setBoneSolverMode(false);
+    });
+
+    animIkMode.addEventListener('click', () => {
+        setBoneSolverMode(true);
     });
 
     btnInsertKeyframe.addEventListener('click', () => {
@@ -1862,6 +1866,11 @@ function setBoneTransformMode(mode: BoneTransformMode): void {
     syncAnimationEditor();
 }
 
+function setBoneSolverMode(ikEnabled: boolean): void {
+    viewer.setIkEnabled(ikEnabled);
+    syncAnimationEditor();
+}
+
 function syncAnimationEditor(): void {
     const state = viewer.getAnimationEditorState();
     const skeletonState = viewer.getSkeletonEditorState();
@@ -1921,11 +1930,12 @@ function renderSkeletonControls(state: SkeletonEditorState): void {
     animShowTransformInput.checked = state.transformControlsVisible;
     animShowTransformInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animBoneSearch.disabled = !state.hasSkeleton;
-    animIkEnabledInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    animFkMode.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    animIkMode.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnInsertKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnDeleteKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animSelectedBone.textContent = state.selectedBoneName || '—';
-    animIkEnabledInput.checked = state.ikEnabled;
+    syncBoneSolverModeButtons(state.ikEnabled);
     syncTransformModeButtons(state.transformMode);
 
     const query = normalizeSearchText(animBoneSearch.value);
@@ -1966,6 +1976,13 @@ function syncTransformModeButtons(mode: BoneTransformMode): void {
     animModeRotate.setAttribute('aria-pressed', String(rotateActive));
     animModeTranslate.classList.toggle('active', !rotateActive);
     animModeTranslate.setAttribute('aria-pressed', String(!rotateActive));
+}
+
+function syncBoneSolverModeButtons(ikEnabled: boolean): void {
+    animFkMode.classList.toggle('active', !ikEnabled);
+    animFkMode.setAttribute('aria-pressed', String(!ikEnabled));
+    animIkMode.classList.toggle('active', ikEnabled);
+    animIkMode.setAttribute('aria-pressed', String(ikEnabled));
 }
 
 let timelineRenderRaf = 0;
