@@ -1732,6 +1732,24 @@ export class Viewer {
         };
     }
 
+    getSelectedBoneChainLocalTrs(): Array<{
+        boneName: string;
+        position: [number, number, number];
+        quaternion: [number, number, number, number];
+        scale: [number, number, number];
+    }> {
+        const root = this.selectedBone;
+        if (!root) return [];
+        return this.bones
+            .filter((bone) => bone === root || this.isBoneDescendantOf(bone, root))
+            .map((bone) => ({
+                boneName: bone.name,
+                position: [bone.position.x, bone.position.y, bone.position.z],
+                quaternion: [bone.quaternion.x, bone.quaternion.y, bone.quaternion.z, bone.quaternion.w],
+                scale: [bone.scale.x, bone.scale.y, bone.scale.z],
+            }));
+    }
+
     applyLocalTrsToBone(
         target: { boneIndex?: number; boneName?: string },
         trs: {
@@ -1758,6 +1776,35 @@ export class Viewer {
         }
         this.onSkeletonChanged(this.getSkeletonEditorState());
         return true;
+    }
+
+    applyLocalTrsToBones(items: Array<{
+        boneName: string;
+        position?: [number, number, number];
+        quaternion?: [number, number, number, number];
+        scale?: [number, number, number];
+    }>): number {
+        if (items.length === 0) return 0;
+
+        const targets: Bone[] = [];
+        for (const item of items) {
+            const bone = this.resolveBone({ boneName: item.boneName });
+            if (!bone) continue;
+            if (item.position) bone.position.fromArray(item.position);
+            if (item.quaternion) bone.quaternion.fromArray(item.quaternion);
+            if (item.scale) bone.scale.fromArray(item.scale);
+            bone.updateMatrixWorld(true);
+            targets.push(bone);
+        }
+
+        if (targets.length === 0) return 0;
+        if (this.ikEnabled && this.selectedBone && targets.includes(this.selectedBone)) this.solveIk();
+        this.refreshActiveRootMatrices();
+        this.updateSkeletonOverlay();
+        const clip = this.ensureActiveAnimationClip();
+        if (clip) this.autoKeyframeBonePoseTargets(clip, [...new Set(targets)]);
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+        return targets.length;
     }
 
     mirrorSelectedBonePose(): { sourceName: string; targetName: string } | null {

@@ -296,6 +296,10 @@ const btnInsertChainKeyframe = $<HTMLButtonElement>('btn-insert-chain-keyframe')
 const btnDeleteKeyframe = $<HTMLButtonElement>('btn-delete-keyframe');
 const btnResetBonePose = $<HTMLButtonElement>('btn-reset-bone-pose');
 const btnResetBoneChainPose = $<HTMLButtonElement>('btn-reset-bone-chain-pose');
+const btnCopyBonePose = $<HTMLButtonElement>('btn-copy-bone-pose');
+const btnPasteBonePose = $<HTMLButtonElement>('btn-paste-bone-pose');
+const btnCopyBoneChainPose = $<HTMLButtonElement>('btn-copy-bone-chain-pose');
+const btnPasteBoneChainPose = $<HTMLButtonElement>('btn-paste-bone-chain-pose');
 const btnMirrorBonePose = $<HTMLButtonElement>('btn-mirror-bone-pose');
 const btnMirrorAnimation = $<HTMLButtonElement>('btn-mirror-animation');
 const btnAnimHistoryUndo = $<HTMLButtonElement>('btn-anim-history-undo');
@@ -335,11 +339,17 @@ const animTimeScaleRange = $<HTMLInputElement>('anim-time-scale-range');
 const animTimeScaleInput = $<HTMLInputElement>('anim-time-scale-input');
 const btnApplyAnimTimeScale = $<HTMLButtonElement>('btn-apply-anim-time-scale');
 
-type BonePoseClipboard = {
+type BonePoseClipboardItem = {
     boneName: string;
     position: [number, number, number];
     quaternion: [number, number, number, number];
     scale: [number, number, number];
+};
+
+type BonePoseClipboard = {
+    mode: 'single' | 'chain';
+    sourceBoneName: string;
+    items: BonePoseClipboardItem[];
 };
 
 const ANIMATION_EASING_CURVES: Record<Exclude<AnimationEasingName, 'custom'>, AnimationEasingCurve> = {
@@ -979,12 +989,32 @@ function copySelectedBonePose(): void {
         return;
     }
     bonePoseClipboard = {
-        boneName: trs.boneName,
-        position: trs.position,
-        quaternion: trs.quaternion,
-        scale: trs.scale,
+        mode: 'single',
+        sourceBoneName: trs.boneName,
+        items: [{
+            boneName: trs.boneName,
+            position: trs.position,
+            quaternion: trs.quaternion,
+            scale: trs.scale,
+        }],
     };
+    syncAnimationEditor();
     showToast(`已复制 ${trs.boneName || '骨骼'} 姿态`, 'success');
+}
+
+function copySelectedBoneChainPose(): void {
+    const items = viewer.getSelectedBoneChainLocalTrs();
+    if (items.length === 0) {
+        showToast('未选中骨骼子链', 'info');
+        return;
+    }
+    bonePoseClipboard = {
+        mode: 'chain',
+        sourceBoneName: items[0]?.boneName ?? '',
+        items,
+    };
+    syncAnimationEditor();
+    showToast(`已复制 ${items.length} 根骨骼姿态`, 'success');
 }
 
 function pasteBonePose(opts: { mirror: boolean }): void {
@@ -998,6 +1028,12 @@ function pasteBonePose(opts: { mirror: boolean }): void {
         return;
     }
 
+    const source = bonePoseClipboard.items[0];
+    if (!source) {
+        showToast('剪贴板里没有骨骼姿态', 'info');
+        return;
+    }
+
     const target = opts.mirror ? findMirroredBoneName(selected.boneName) : selected.boneName;
     const targetIndex = target ? viewer.findBoneIndexByName(target) : selected.boneIndex;
     if (targetIndex < 0) {
@@ -1006,7 +1042,6 @@ function pasteBonePose(opts: { mirror: boolean }): void {
     }
 
     runAnimationEdit(opts.mirror ? '镜像粘贴骨骼姿态' : '粘贴骨骼姿态', () => {
-        const source = bonePoseClipboard!;
         const trs = opts.mirror
             ? {
                 position: [-source.position[0], source.position[1], source.position[2]] as [number, number, number],
@@ -1017,6 +1052,34 @@ function pasteBonePose(opts: { mirror: boolean }): void {
         viewer.applyLocalTrsToBone({ boneIndex: targetIndex }, trs);
     });
     showToast(opts.mirror ? `已镜像到 ${target}` : '已粘贴骨骼姿态', 'success');
+}
+
+function pasteBoneChainPose(opts: { mirror: boolean }): void {
+    if (!bonePoseClipboard || bonePoseClipboard.items.length === 0) {
+        showToast('剪贴板里没有骨骼姿态', 'info');
+        return;
+    }
+
+    const targets = bonePoseClipboard.items.map((item) => {
+        const targetName = opts.mirror ? findMirroredBoneName(item.boneName) : item.boneName;
+        if (!targetName) return null;
+        return {
+            boneName: targetName,
+            position: opts.mirror
+                ? [-item.position[0], item.position[1], item.position[2]] as [number, number, number]
+                : item.position,
+            quaternion: opts.mirror
+                ? [item.quaternion[0], -item.quaternion[1], -item.quaternion[2], item.quaternion[3]] as [number, number, number, number]
+                : item.quaternion,
+            scale: item.scale,
+        };
+    }).filter((item): item is BonePoseClipboardItem => Boolean(item));
+
+    let count = 0;
+    runAnimationEdit(opts.mirror ? '镜像粘贴骨骼子链姿态' : '粘贴骨骼子链姿态', () => {
+        count = viewer.applyLocalTrsToBones(targets);
+    });
+    showToast(count > 0 ? `已粘贴 ${count} 根骨骼姿态` : '没有匹配的骨骼可粘贴', count > 0 ? 'success' : 'info');
 }
 
 function findMirroredBoneName(name: string): string | null {
@@ -1062,14 +1125,15 @@ function setupKeyboardShortcuts(): void {
             return;
         }
 
-        // Ctrl+C / Ctrl+V / Ctrl+Shift+V — bone pose clipboard.
+        // Ctrl+C / Ctrl+Shift+C / Ctrl+V / Ctrl+Shift+V — bone pose clipboard.
         // Only when the skeleton overlay is visible (clear "rigging mode" signal),
         // so we don't steal default browser copy/paste outside that mode.
         const skeletonActive = viewer.getSkeletonEditorState({ includeKeyframes: false }).skeletonVisible
             && Boolean(viewer.getSelectedBoneLocalTrs());
-        if (ctrlOnly && skeletonActive && lowerKey === 'c' && !event.shiftKey) {
+        if (ctrlOnly && skeletonActive && lowerKey === 'c') {
             event.preventDefault();
-            copySelectedBonePose();
+            if (event.shiftKey) copySelectedBoneChainPose();
+            else copySelectedBonePose();
             return;
         }
         if (ctrlOnly && skeletonActive && lowerKey === 'v' && !event.shiftKey) {
@@ -1560,6 +1624,11 @@ function setupAnimationControls(): void {
         });
         showToast(count > 0 ? `已重置 ${count} 根骨骼` : '没有可重置的骨骼子链', count > 0 ? 'success' : 'info');
     });
+
+    btnCopyBonePose.addEventListener('click', copySelectedBonePose);
+    btnPasteBonePose.addEventListener('click', () => pasteBonePose({ mirror: false }));
+    btnCopyBoneChainPose.addEventListener('click', copySelectedBoneChainPose);
+    btnPasteBoneChainPose.addEventListener('click', () => pasteBoneChainPose({ mirror: false }));
 
     btnMirrorBonePose.addEventListener('click', () => {
         mirrorSelectedBonePose();
@@ -2215,6 +2284,10 @@ function renderSkeletonControls(state: SkeletonEditorState): void {
     btnInsertKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnInsertChainKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnDeleteKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    btnCopyBonePose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    btnPasteBonePose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !bonePoseClipboard;
+    btnCopyBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    btnPasteBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !bonePoseClipboard;
     animSelectedBone.textContent = state.selectedBoneName || '—';
     syncBoneSolverModeButtons(state.ikEnabled);
     syncTransformModeButtons(state.transformMode);
