@@ -406,6 +406,7 @@ const modelNameEls = [toolbarModelName, modelName];
 
 let animTimeRangeSyncing = false;
 let selectedAnimationTrackIndex = -1;
+let lastTrackSyncedBoneIndex = -1;
 let selectedKeyframeTimes: number[] = [];
 let animationClipboard: AnimationClipSnapshot | null = null;
 let keyframeClipboard: AnimationClipSnapshot | null = null;
@@ -2834,6 +2835,7 @@ function syncAnimationEditor(): void {
         animEditorEmpty.hidden = false;
         animEditor.hidden = true;
         selectedAnimationTrackIndex = -1;
+        lastTrackSyncedBoneIndex = -1;
         animClipNameInput.value = '';
         renderAnimationHistory();
         syncAnimationClipTools(viewer.getAnimationState());
@@ -2859,6 +2861,7 @@ function syncAnimationEditor(): void {
 
     if (state.tracks.length === 0) {
         selectedAnimationTrackIndex = -1;
+        lastTrackSyncedBoneIndex = skeletonState.selectedBoneIndex;
         animTrackType.textContent = '—';
         animTrackKeys.textContent = '—';
         animTransformControls.hidden = true;
@@ -2868,6 +2871,16 @@ function syncAnimationEditor(): void {
 
     const previousIndex = Number(previousValue);
     let shouldResetInputs = false;
+    const preferredBoneTrack = findPreferredTrackForSelectedBone(state, skeletonState);
+    if (
+        skeletonState.selectedBoneIndex >= 0
+        && skeletonState.selectedBoneIndex !== lastTrackSyncedBoneIndex
+        && preferredBoneTrack
+    ) {
+        selectedAnimationTrackIndex = preferredBoneTrack.index;
+        lastTrackSyncedBoneIndex = skeletonState.selectedBoneIndex;
+        shouldResetInputs = true;
+    }
     const selectedStillAvailable = state.tracks.some((track) => track.index === selectedAnimationTrackIndex && track.editable);
     if (!selectedStillAvailable) {
         const fromPrevious = state.tracks.find((track) => track.index === previousIndex && track.editable);
@@ -2975,6 +2988,23 @@ function getBoneInfluenceLabel(state: SkeletonEditorState): string {
 function getBoneCurrentKeyLabel(state: SkeletonEditorState): string {
     if (!state.hasSkeleton || state.selectedBoneIndex < 0) return '—';
     return state.selectedBoneCurrentKeyed ? '已打键' : '未打键';
+}
+
+function findPreferredTrackForSelectedBone(
+    state: AnimationEditorState,
+    skeletonState: SkeletonEditorState,
+): AnimationTrackMeta | null {
+    if (!skeletonState.selectedBoneName) return null;
+    const selectedName = normalizeSearchText(skeletonState.selectedBoneName);
+    const matches = state.tracks.filter((track) => (
+        track.editable
+        && normalizeSearchText(track.target) === selectedName
+    ));
+    if (matches.length === 0) return null;
+    return matches.find((track) => track.property === 'quaternion')
+        ?? matches.find((track) => track.property === 'position')
+        ?? matches.find((track) => track.property === 'scale')
+        ?? matches[0];
 }
 
 function syncBoneTransformFields(state: SkeletonEditorState): void {
