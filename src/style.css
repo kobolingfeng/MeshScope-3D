@@ -1066,6 +1066,13 @@ summary:focus-visible,
     white-space: nowrap;
 }
 
+.animation-bone-meta {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
 .animation-bone-parent {
     max-width: 88px;
     overflow: hidden;
@@ -1073,6 +1080,20 @@ summary:focus-visible,
     font-size: 11px;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.animation-bone-keyframes {
+    flex: 0 0 auto;
+    min-width: 28px;
+    padding: 1px 5px;
+    border: 1px solid rgba(47, 111, 179, 0.2);
+    border-radius: 999px;
+    background: rgba(47, 111, 179, 0.08);
+    color: var(--text-1);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1.4;
+    text-align: center;
 }
 
 .animation-list-empty {

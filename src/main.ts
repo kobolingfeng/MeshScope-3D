@@ -2894,7 +2894,10 @@ function renderSkeletonControls(
             return `
                 <button class="animation-bone-item${active}" type="button" role="option" data-bone-index="${bone.index}" aria-selected="${bone.selected}" style="--bone-depth:${depth}">
                     <span class="animation-bone-name">${escapeHtml(bone.name)}</span>
-                    <span class="animation-bone-parent">${escapeHtml(bone.parentName || '根')}</span>
+                    <span class="animation-bone-meta">
+                        <span class="animation-bone-parent">${escapeHtml(bone.parentName || '根')}</span>
+                        <span class="animation-bone-keyframes" title="当前动画关键帧数">K${bone.keyframes}</span>
+                    </span>
                 </button>
             `;
         }).join('')

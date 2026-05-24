@@ -212,6 +212,7 @@ export type SkeletonBoneMeta = {
     name: string;
     parentName: string;
     depth: number;
+    keyframes: number;
     selected: boolean;
 };
 
@@ -324,7 +325,7 @@ export class Viewer {
     private skeletonEditorActivated = false;
     private skeletonHelper: SkeletonHelper | null = null;
     private bones: Bone[] = [];
-    private boneMetaBase: Array<Omit<SkeletonBoneMeta, 'selected'>> = [];
+    private boneMetaBase: Array<Omit<SkeletonBoneMeta, 'selected' | 'keyframes'>> = [];
     private boneRestPose = new Map<Bone, { position: Vector3; quaternion: Quaternion; scale: Vector3 }>();
     private selectedBone: Bone | null = null;
     private boneHandles = new Map<Bone, Mesh>();
@@ -1305,16 +1306,19 @@ export class Viewer {
         };
     }
 
-    getSkeletonEditorState(options: { includeKeyframes?: boolean } = {}): SkeletonEditorState {
+    getSkeletonEditorState(options: { includeKeyframes?: boolean; includeBoneKeyframes?: boolean } = {}): SkeletonEditorState {
         const includeKeyframes = options.includeKeyframes ?? true;
+        const includeBoneKeyframes = options.includeBoneKeyframes ?? includeKeyframes;
         const selectedIndex = this.selectedBone ? this.bones.indexOf(this.selectedBone) : -1;
         const selectedName = this.selectedBone ? getBoneDisplayName(this.selectedBone, selectedIndex) : '';
+        const boneKeyframes = includeBoneKeyframes ? this.getBoneKeyframeCounts() : null;
         return {
             hasSkeleton: this.bones.length > 0,
             skeletonVisible: this.skeletonVisible,
             transformControlsVisible: this.transformControlsVisible,
             bones: this.boneMetaBase.map((bone) => ({
                 ...bone,
+                keyframes: boneKeyframes?.get(this.bones[bone.index]) ?? 0,
                 selected: bone.index === selectedIndex,
             })),
             selectedBoneIndex: selectedIndex,
@@ -3145,6 +3149,39 @@ export class Viewer {
             markers,
         };
         return markers;
+    }
+
+    private getBoneKeyframeCounts(): Map<Bone, number> {
+        const clip = this.animClips[this.activeClipIndex];
+        const counts = new Map<Bone, number>();
+        if (!clip || clip.tracks.length === 0 || this.bones.length === 0) return counts;
+
+        const boneByTarget = new Map<string, Bone>();
+        for (let index = 0; index < this.bones.length; index += 1) {
+            const bone = this.bones[index];
+            for (const name of [bone.name, bone.uuid, getBoneDisplayName(bone, index)].filter(Boolean)) {
+                boneByTarget.set(name, bone);
+            }
+        }
+
+        const timesByBone = new Map<Bone, Set<string>>();
+        for (const track of clip.tracks) {
+            const parsed = parseAnimationTrackName(track.name);
+            if (parsed.property !== 'position' && parsed.property !== 'quaternion' && parsed.property !== 'scale') continue;
+            const bone = boneByTarget.get(parsed.target);
+            if (!bone) continue;
+            let times = timesByBone.get(bone);
+            if (!times) {
+                times = new Set<string>();
+                timesByBone.set(bone, times);
+            }
+            for (const rawTime of Array.from(track.times as ArrayLike<number>)) {
+                times.add(Number(rawTime).toFixed(5));
+            }
+        }
+
+        for (const [bone, times] of timesByBone) counts.set(bone, times.size);
+        return counts;
     }
 
     private disposeAnimations(): void {
