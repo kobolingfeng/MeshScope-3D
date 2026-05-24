@@ -1416,6 +1416,23 @@ function setupKeyboardShortcuts(): void {
             return;
         }
 
+        if (!event.ctrlKey && !event.metaKey && !event.altKey && lowerKey === 'h') {
+            const skeleton = viewer.getSkeletonEditorState({ includeKeyframes: false });
+            if (!skeleton.hasSkeleton) return;
+            event.preventDefault();
+            if (event.shiftKey) {
+                const visible = !skeleton.transformControlsVisible;
+                viewer.setTransformControlsVisible(visible);
+                showToast(visible ? '已显示骨骼操作轴' : '已隐藏骨骼操作轴', 'success');
+            } else {
+                const visible = !skeleton.skeletonVisible;
+                viewer.setSkeletonVisible(visible);
+                showToast(visible ? '已显示骨架' : '已隐藏骨架', 'success');
+            }
+            syncAnimationEditor();
+            return;
+        }
+
         const shiftFrameStep = event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && (key === '[' || key === ']');
         const timelineZoomStep = !event.ctrlKey && !event.metaKey && !event.altKey && (key === '=' || key === '+' || key === '-');
         const shiftTimelineNav = event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && (key === 'ArrowLeft' || key === 'ArrowRight');
