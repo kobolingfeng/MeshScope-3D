@@ -1130,6 +1130,14 @@ function pasteBoneChainPose(opts: { mirror: boolean }): void {
     showToast(count > 0 ? `已粘贴 ${count} 根骨骼姿态` : '没有匹配的骨骼可粘贴', count > 0 ? 'success' : 'info');
 }
 
+function pasteAllBonesPose(): void {
+    if (bonePoseClipboard?.mode !== 'all') {
+        showToast('剪贴板里没有全身姿态', 'info');
+        return;
+    }
+    pasteBoneChainPose({ mirror: false });
+}
+
 function mirrorSelectedBoneChainPose(): void {
     const items = viewer.getSelectedBoneChainLocalTrs();
     if (items.length === 0) {
@@ -1908,7 +1916,7 @@ function setupAnimationControls(): void {
     btnCopyBoneChainPose.addEventListener('click', copySelectedBoneChainPose);
     btnPasteBoneChainPose.addEventListener('click', () => pasteBoneChainPose({ mirror: false }));
     btnCopyAllBonesPose.addEventListener('click', copyAllBonesPose);
-    btnPasteAllBonesPose.addEventListener('click', () => pasteBoneChainPose({ mirror: false }));
+    btnPasteAllBonesPose.addEventListener('click', pasteAllBonesPose);
 
     btnMirrorBonePose.addEventListener('click', () => {
         mirrorSelectedBonePose();
@@ -2207,7 +2215,7 @@ function syncAnimationClipTools(state: AnimationPlaybackState): void {
     btnMirrorAllBonesPose.disabled = !hasSkeleton;
     btnMirrorAnimation.disabled = !hasSkeleton || !state.hasAnimations || state.activeIndex < 0;
     btnCopyAllBonesPose.disabled = !hasSkeleton;
-    btnPasteAllBonesPose.disabled = !hasSkeleton || !bonePoseClipboard;
+    btnPasteAllBonesPose.disabled = !hasSkeleton || bonePoseClipboard?.mode !== 'all';
 }
 
 async function toggleAnimationWithLazyLoad(): Promise<void> {
@@ -2751,7 +2759,7 @@ function renderSkeletonControls(
     btnCopyBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnPasteBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !bonePoseClipboard;
     btnCopyAllBonesPose.disabled = !state.hasSkeleton;
-    btnPasteAllBonesPose.disabled = !state.hasSkeleton || !bonePoseClipboard;
+    btnPasteAllBonesPose.disabled = !state.hasSkeleton || bonePoseClipboard?.mode !== 'all';
     btnMirrorBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnResetAllBonesPose.disabled = !state.hasSkeleton;
     btnMirrorAllBonesPose.disabled = !state.hasSkeleton;
