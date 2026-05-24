@@ -1415,6 +1415,77 @@ export class Viewer {
         };
     }
 
+    captureKeyframesAtTimes(times: number[]): AnimationClipSnapshot | null {
+        const clip = this.animClips[this.activeClipIndex];
+        const selectedTimes = normalizeKeyframeTimes(times);
+        if (!clip || selectedTimes.length === 0) return null;
+
+        const sourceStart = selectedTimes[0];
+        const tracks: AnimationClipSnapshot['tracks'] = [];
+        for (const track of clip.tracks) {
+            const valueSize = track.getValueSize();
+            if (valueSize <= 0) continue;
+            const trackTimes = Array.from(track.times as ArrayLike<number>);
+            const trackValues = Array.from(track.values as ArrayLike<number>);
+            const copiedTimes: number[] = [];
+            const copiedValues: number[] = [];
+
+            for (let index = 0; index < trackTimes.length; index += 1) {
+                if (!selectedTimes.some((time) => nearlyEqualTime(time, trackTimes[index]))) continue;
+                copiedTimes.push(Math.max(0, trackTimes[index] - sourceStart));
+                copiedValues.push(...trackValues.slice(index * valueSize, index * valueSize + valueSize));
+            }
+
+            if (copiedTimes.length > 0) {
+                tracks.push({
+                    index: tracks.length,
+                    name: track.name,
+                    times: copiedTimes,
+                    values: copiedValues,
+                });
+            }
+        }
+
+        if (tracks.length === 0) return null;
+        return {
+            clipIndex: -1,
+            clipName: clip.name,
+            duration: Math.max(0, selectedTimes[selectedTimes.length - 1] - sourceStart),
+            tracks,
+        };
+    }
+
+    pasteKeyframesFromSnapshot(snapshot: AnimationClipSnapshot, startTime: number): boolean {
+        const clip = this.ensureActiveAnimationClip();
+        if (!clip || snapshot.tracks.length === 0 || !Number.isFinite(startTime)) return false;
+
+        let changed = false;
+        let maxPastedTime = clip.duration;
+        for (const trackSnapshot of snapshot.tracks) {
+            if (trackSnapshot.times.length === 0) continue;
+            const shiftedTimes = trackSnapshot.times.map((time) => Math.max(0, startTime + time));
+            const existingIndex = clip.tracks.findIndex((track) => track.name === trackSnapshot.name);
+            if (existingIndex < 0) {
+                clip.tracks.push(createTrackFromSnapshot(trackSnapshot.name, shiftedTimes, trackSnapshot.values));
+            } else {
+                clip.tracks[existingIndex] = upsertTrackKeyframes(
+                    clip.tracks[existingIndex],
+                    shiftedTimes,
+                    trackSnapshot.values,
+                );
+            }
+            maxPastedTime = shiftedTimes.reduce((max, time) => Math.max(max, time), maxPastedTime);
+            changed = true;
+        }
+
+        if (!changed) return false;
+        clip.duration = Math.max(clip.duration, maxPastedTime, 0.001);
+        this.refreshAnimationClipMetas();
+        this.refreshActiveAnimationAfterEdit(this.activeClipIndex);
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+        return true;
+    }
+
     restoreAnimationSnapshot(snapshot: AnimationClipSnapshot): void {
         const clip = this.animClips[snapshot.clipIndex];
         if (!clip) return;
@@ -2756,6 +2827,30 @@ function cloneTrackWithData(track: KeyframeTrack, times: number[], values: numbe
     return cloneTrackWithNamedData(track, track.name, times, values);
 }
 
+function upsertTrackKeyframes(track: KeyframeTrack, incomingTimes: number[], incomingValues: number[]): KeyframeTrack {
+    const valueSize = track.getValueSize();
+    if (valueSize <= 0 || incomingValues.length !== incomingTimes.length * valueSize) return track;
+
+    const times = Array.from(track.times as ArrayLike<number>);
+    const values = Array.from(track.values as ArrayLike<number>);
+    for (let row = 0; row < incomingTimes.length; row += 1) {
+        const time = incomingTimes[row];
+        const rowValues = incomingValues.slice(row * valueSize, row * valueSize + valueSize);
+        let index = times.findIndex((item) => nearlyEqualTime(item, time));
+        if (index >= 0) {
+            values.splice(index * valueSize, valueSize, ...rowValues);
+            continue;
+        }
+
+        index = times.findIndex((item) => item > time);
+        if (index < 0) index = times.length;
+        times.splice(index, 0, time);
+        values.splice(index * valueSize, 0, ...rowValues);
+    }
+
+    return cloneTrackWithData(track, times, values);
+}
+
 function cloneTrackWithNamedData(track: KeyframeTrack, name: string, times: number[], values: number[]): KeyframeTrack {
     const property = parseAnimationTrackName(name).property;
     const next = property === 'quaternion'
@@ -2950,6 +3045,14 @@ function findMirroredBoneName(name: string, names: Set<string>): string | null {
 
 function nearlyEqualTime(a: number, b: number): boolean {
     return Math.abs(a - b) < 1e-4;
+}
+
+function normalizeKeyframeTimes(times: number[]): number[] {
+    return [...new Set(
+        times
+            .filter(Number.isFinite)
+            .map((time) => Number(time.toFixed(4))),
+    )].sort((a, b) => a - b);
 }
 
 function buildAnimationTrackMeta(track: KeyframeTrack, index: number): AnimationTrackMeta {

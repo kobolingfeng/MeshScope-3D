@@ -292,6 +292,8 @@ const animHistoryList = $('anim-history-list');
 const animKeyframeSelection = $('anim-keyframe-selection');
 const btnTimelineSelectAll = $<HTMLButtonElement>('btn-timeline-select-all');
 const btnTimelineClearSelection = $<HTMLButtonElement>('btn-timeline-clear-selection');
+const btnTimelineCopyKeys = $<HTMLButtonElement>('btn-timeline-copy-keys');
+const btnTimelinePasteKeys = $<HTMLButtonElement>('btn-timeline-paste-keys');
 const animTimelineSnapInput = $<HTMLInputElement>('anim-timeline-snap');
 const animTimelineFpsInput = $<HTMLInputElement>('anim-timeline-fps');
 const animTimelineZoomInput = $<HTMLInputElement>('anim-timeline-zoom');
@@ -348,6 +350,7 @@ let animTimeRangeSyncing = false;
 let selectedAnimationTrackIndex = -1;
 let selectedKeyframeTimes: number[] = [];
 let animationClipboard: AnimationClipSnapshot | null = null;
+let keyframeClipboard: AnimationClipSnapshot | null = null;
 const lazyAnimationLoads = new Map<string, Promise<boolean>>();
 let animationClipListRenderKey = '';
 let lastScrolledBoneIndex = -1;
@@ -1436,6 +1439,14 @@ function setupAnimationControls(): void {
         renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
     });
 
+    btnTimelineCopyKeys.addEventListener('click', () => {
+        copySelectedTimelineKeyframes();
+    });
+
+    btnTimelinePasteKeys.addEventListener('click', () => {
+        pasteTimelineKeyframesAtPlayhead();
+    });
+
     animTimelineSnapInput.addEventListener('change', () => {
         timelineSnapEnabled = animTimelineSnapInput.checked;
         renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
@@ -1830,6 +1841,55 @@ function pasteClipKeyframesToActiveClip(): void {
     showToast(`已粘贴 "${clipName}" 的关键帧`, 'success');
 }
 
+function copySelectedTimelineKeyframes(): void {
+    if (selectedKeyframeTimes.length === 0) {
+        showToast('先在时间轴选择关键帧', 'info');
+        return;
+    }
+
+    const snapshot = viewer.captureKeyframesAtTimes(selectedKeyframeTimes);
+    if (!snapshot) {
+        showToast('没有可复制的关键帧', 'info');
+        return;
+    }
+
+    keyframeClipboard = snapshot;
+    updateTimelineSelectionSummary();
+    showToast(`已复制 ${selectedKeyframeTimes.length} 个时间点 · ${snapshot.tracks.length} 条轨道`, 'success');
+}
+
+function pasteTimelineKeyframesAtPlayhead(): void {
+    const clipboard = keyframeClipboard;
+    if (!clipboard) {
+        showToast('剪贴板里没有时间轴关键帧', 'info');
+        return;
+    }
+
+    const state = viewer.getAnimationState();
+    if (!state.hasAnimations || state.activeIndex < 0) {
+        showToast('需要先有一个动画片段', 'info');
+        return;
+    }
+
+    const pasteTime = state.time;
+    let changed = false;
+    runAnimationEdit('粘贴时间轴关键帧', () => {
+        changed = viewer.pasteKeyframesFromSnapshot(clipboard, pasteTime);
+    });
+    if (!changed) {
+        showToast('没有可粘贴的关键帧', 'info');
+        return;
+    }
+
+    selectedKeyframeTimes = [
+        ...new Set(clipboard.tracks.flatMap((track) => (
+            track.times.map((time) => Number((pasteTime + time).toFixed(4)))
+        ))),
+    ].sort((a, b) => a - b);
+    syncAnimationEditor();
+    showToast(`已粘贴到 ${formatFrameTime(pasteTime)}`, 'success');
+}
+
 function duplicateClipAt(index: number): void {
     const newIndex = viewer.duplicateAnimationClip(index, { activate: true });
     if (newIndex < 0) {
@@ -2134,7 +2194,10 @@ function updateTimelineSelectionSummary(
     animKeyframeSelection.textContent = count > 0
         ? `${count} 关键帧 · F${frame}`
         : `0 关键帧 · F${frame}`;
+    const hasAnimations = state.hasAnimations && state.activeIndex >= 0;
     btnTimelineClearSelection.disabled = count === 0;
+    btnTimelineCopyKeys.disabled = count === 0;
+    btnTimelinePasteKeys.disabled = !keyframeClipboard || !hasAnimations;
     btnDeleteKeyframe.textContent = count > 0 ? `删除选中 ${count}` : '删除当前帧';
     animTimelineZoomLabel.textContent = `${Math.round(timelineZoom * 100)}%`;
     if (options.updateStatus ?? true) updateStatusChips(state);
