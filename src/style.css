@@ -998,6 +998,11 @@ summary:focus-visible,
     justify-content: flex-start;
 }
 
+.animation-keyframe-actions .mini-btn {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 86px;
+}
+
 .animation-bone-list {
     display: grid;
     gap: 4px;
