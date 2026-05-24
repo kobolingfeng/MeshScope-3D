@@ -1544,6 +1544,36 @@ export class Viewer {
         return true;
     }
 
+    mirrorSelectedBonePose(): { sourceName: string; targetName: string } | null {
+        const source = this.selectedBone;
+        if (!source) return null;
+
+        const targetName = findMirroredBoneName(source.name, new Set(this.bones.map((bone) => bone.name)));
+        if (!targetName) return null;
+
+        const target = this.bones.find((bone) => bone.name === targetName);
+        if (!target) return null;
+
+        const mirrored = mirrorBoneLocalTrs(source);
+        target.position.fromArray(mirrored.position);
+        target.quaternion.fromArray(mirrored.quaternion);
+        target.scale.fromArray(mirrored.scale);
+        target.updateMatrixWorld(true);
+
+        const clip = this.ensureActiveAnimationClip();
+        if (clip) this.autoKeyframeBonePoseTargets(clip, [target]);
+
+        this.selectedBone = target;
+        this.refreshIkChain();
+        this.attachTransformTarget();
+        this.updateSkeletonOverlay();
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+        return {
+            sourceName: getBoneDisplayName(source, this.bones.indexOf(source)),
+            targetName: getBoneDisplayName(target, this.bones.indexOf(target)),
+        };
+    }
+
     stepSelectedBoneTransform(axis: 'x' | 'y' | 'z', direction: 1 | -1): boolean {
         const bone = this.selectedBone;
         if (!bone) return false;
@@ -1620,6 +1650,18 @@ export class Viewer {
         this.onAnimationsChanged(this.getAnimationState());
         if (opts.activate) this.selectAnimationClip(newIndex, { autoPlay: false });
         return newIndex;
+    }
+
+    mirrorActiveAnimationClip(): boolean {
+        const clip = this.animClips[this.activeClipIndex];
+        if (!clip || clip.tracks.length === 0) return false;
+
+        const boneNames = new Set(this.bones.map((bone) => bone.name).filter(Boolean));
+        clip.tracks = clip.tracks.map((track) => mirrorAnimationTrack(track, boneNames));
+        this.refreshAnimationClipMetas();
+        this.refreshActiveAnimationAfterEdit(this.activeClipIndex);
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+        return true;
     }
 
     getLazyAnimationClipSource(index = this.activeClipIndex): LazyAnimationClipSource | null {
@@ -2566,10 +2608,16 @@ function moveKeyframesNearTimes(
 }
 
 function cloneTrackWithData(track: KeyframeTrack, times: number[], values: number[]): KeyframeTrack {
-    const property = parseAnimationTrackName(track.name).property;
+    return cloneTrackWithNamedData(track, track.name, times, values);
+}
+
+function cloneTrackWithNamedData(track: KeyframeTrack, name: string, times: number[], values: number[]): KeyframeTrack {
+    const property = parseAnimationTrackName(name).property;
     const next = property === 'quaternion'
-        ? new QuaternionKeyframeTrack(track.name, times, values)
-        : new VectorKeyframeTrack(track.name, times, values);
+        ? new QuaternionKeyframeTrack(name, times, values)
+        : property === 'position' || property === 'scale'
+            ? new VectorKeyframeTrack(name, times, values)
+            : new NumberKeyframeTrack(name, times, values);
     const interpolation = (track as unknown as { getInterpolation?: () => number }).getInterpolation?.();
     if (typeof interpolation === 'number') {
         (next as unknown as { setInterpolation?: (value: number) => void }).setInterpolation?.(interpolation);
@@ -2692,6 +2740,67 @@ function getBonePropertyValue(
     if (property === 'quaternion') return [bone.quaternion.x, bone.quaternion.y, bone.quaternion.z, bone.quaternion.w];
     const vector = property === 'position' ? bone.position : bone.scale;
     return [vector.x, vector.y, vector.z];
+}
+
+function mirrorBoneLocalTrs(bone: Bone): {
+    position: [number, number, number];
+    quaternion: [number, number, number, number];
+    scale: [number, number, number];
+} {
+    return {
+        position: [-bone.position.x, bone.position.y, bone.position.z],
+        quaternion: [bone.quaternion.x, -bone.quaternion.y, -bone.quaternion.z, bone.quaternion.w],
+        scale: [bone.scale.x, bone.scale.y, bone.scale.z],
+    };
+}
+
+function mirrorAnimationTrack(track: KeyframeTrack, boneNames: Set<string>): KeyframeTrack {
+    const parsed = parseAnimationTrackName(track.name);
+    const times = Array.from(track.times as ArrayLike<number>);
+    const values = Array.from(track.values as ArrayLike<number>);
+    if (parsed.property !== 'position' && parsed.property !== 'quaternion' && parsed.property !== 'scale') {
+        return cloneTrackWithNamedData(track, track.name, times, values);
+    }
+
+    const mirroredTarget = findMirroredBoneName(parsed.target, boneNames) ?? parsed.target;
+    const mirroredName = `${mirroredTarget}.${parsed.property}`;
+    const mirroredValues = mirrorTrackValues(parsed.property, values, track.getValueSize());
+    return cloneTrackWithNamedData(track, mirroredName, times, mirroredValues);
+}
+
+function mirrorTrackValues(property: AnimationTrackProperty, values: number[], valueSize: number): number[] {
+    const next = values.slice();
+    if (property === 'position' && valueSize >= 3) {
+        for (let index = 0; index < next.length; index += valueSize) next[index] = -next[index];
+    } else if (property === 'quaternion' && valueSize >= 4) {
+        for (let index = 0; index < next.length; index += valueSize) {
+            next[index + 1] = -next[index + 1];
+            next[index + 2] = -next[index + 2];
+        }
+    }
+    return next;
+}
+
+function findMirroredBoneName(name: string, names: Set<string>): string | null {
+    if (!name) return null;
+    const replacements: Array<[RegExp, string]> = [
+        [/\.L$/i, '.R'], [/\.R$/i, '.L'],
+        [/_L$/i, '_R'],  [/_R$/i, '_L'],
+        [/-L$/i, '-R'],  [/-R$/i, '-L'],
+        [/_l$/i, '_r'],  [/_r$/i, '_l'],
+        [/\bL$/i, 'R'],  [/\bR$/i, 'L'],
+        [/^L_/i, 'R_'],  [/^R_/i, 'L_'],
+        [/^l_/i, 'r_'],  [/^r_/i, 'l_'],
+        [/^Left/i, 'Right'], [/^Right/i, 'Left'],
+        [/Left/g, 'Right'],  [/Right/g, 'Left'],
+        [/left/g, 'right'],  [/right/g, 'left'],
+    ];
+    for (const [pattern, replacement] of replacements) {
+        if (!pattern.test(name)) continue;
+        const candidate = name.replace(pattern, replacement);
+        if (candidate !== name && names.has(candidate)) return candidate;
+    }
+    return null;
 }
 
 function nearlyEqualTime(a: number, b: number): boolean {

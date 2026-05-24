@@ -283,6 +283,8 @@ const animIkEnabledInput = $<HTMLInputElement>('anim-ik-enabled');
 const animKeyframeStrip = $('anim-keyframe-strip');
 const btnInsertKeyframe = $<HTMLButtonElement>('btn-insert-keyframe');
 const btnDeleteKeyframe = $<HTMLButtonElement>('btn-delete-keyframe');
+const btnMirrorBonePose = $<HTMLButtonElement>('btn-mirror-bone-pose');
+const btnMirrorAnimation = $<HTMLButtonElement>('btn-mirror-animation');
 const btnAnimHistoryUndo = $<HTMLButtonElement>('btn-anim-history-undo');
 const btnAnimHistoryRedo = $<HTMLButtonElement>('btn-anim-history-redo');
 const animHistoryList = $('anim-history-list');
@@ -1105,6 +1107,12 @@ function setupKeyboardShortcuts(): void {
             return;
         }
 
+        if (lowerKey === 'm' && viewer.getSelectedBoneLocalTrs()) {
+            event.preventDefault();
+            mirrorSelectedBonePose();
+            return;
+        }
+
         // K — insert keyframe.
         if (lowerKey === 'k') {
             if (viewer.getSelectedBoneLocalTrs()) {
@@ -1390,6 +1398,14 @@ function setupAnimationControls(): void {
         }
     });
 
+    btnMirrorBonePose.addEventListener('click', () => {
+        mirrorSelectedBonePose();
+    });
+
+    btnMirrorAnimation.addEventListener('click', () => {
+        void mirrorActiveAnimationClip();
+    });
+
     btnAnimHistoryUndo.addEventListener('click', () => {
         undoLastEdit();
     });
@@ -1613,10 +1629,13 @@ function renderAnimationClipList(state: AnimationPlaybackState): void {
 }
 
 function syncAnimationClipTools(state: AnimationPlaybackState): void {
-    const hasSkeleton = viewer.getSkeletonEditorState({ includeKeyframes: false }).hasSkeleton;
+    const skeleton = viewer.getSkeletonEditorState({ includeKeyframes: false });
+    const hasSkeleton = skeleton.hasSkeleton;
     btnNewTposeClip.disabled = !hasSkeleton;
     btnCopyClipKeys.disabled = !state.hasAnimations || state.activeIndex < 0;
     btnPasteClipKeys.disabled = !animationClipboard;
+    btnMirrorBonePose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
+    btnMirrorAnimation.disabled = !hasSkeleton || !state.hasAnimations || state.activeIndex < 0;
 }
 
 async function toggleAnimationWithLazyLoad(): Promise<void> {
@@ -1694,6 +1713,53 @@ function createRestPoseClip(): void {
     refreshAnimationBar(viewer.getAnimationState());
     syncAnimationEditor();
     showToast('已从默认 T-Pose 创建新动画', 'success');
+}
+
+function mirrorSelectedBonePose(): void {
+    if (!viewer.getSelectedBoneLocalTrs()) {
+        showToast('请先选中一个骨骼', 'info');
+        return;
+    }
+
+    const resultBox: { value: { sourceName: string; targetName: string } | null } = { value: null };
+    runAnimationEdit('镜像骨骼姿态', () => {
+        resultBox.value = viewer.mirrorSelectedBonePose();
+    });
+    const result = resultBox.value;
+
+    if (!result) {
+        showToast('没找到对称骨骼', 'error');
+        return;
+    }
+
+    selectedKeyframeTimes = [];
+    syncAnimationEditor();
+    showToast(`已镜像 ${result.sourceName} -> ${result.targetName}`, 'success');
+}
+
+async function mirrorActiveAnimationClip(): Promise<void> {
+    const state = viewer.getAnimationState();
+    if (!state.hasAnimations || state.activeIndex < 0) {
+        showToast('没有可镜像的动画', 'info');
+        return;
+    }
+
+    const loaded = await ensureAnimationClipLoaded(state.activeIndex, { autoPlay: false });
+    if (!loaded) return;
+
+    let changed = false;
+    runAnimationEdit('镜像动画', () => {
+        changed = viewer.mirrorActiveAnimationClip();
+    });
+
+    if (!changed) {
+        showToast('镜像动画失败', 'error');
+        return;
+    }
+
+    selectedKeyframeTimes = [];
+    syncAnimationEditor();
+    showToast('当前动画已左右镜像', 'success');
 }
 
 function copyClipKeyframesAt(index: number): void {
