@@ -909,6 +909,19 @@ static json create_glb_preview_file(
 
     if (animationIndex >= 0) {
         doc["animations"] = json::array({doc["animations"][animationIndex]});
+        if (doc.contains("nodes") && doc["nodes"].is_array()) {
+            for (auto& node : doc["nodes"]) {
+                if (!node.is_object()) continue;
+                node.erase("mesh");
+                node.erase("skin");
+            }
+        }
+        doc.erase("meshes");
+        doc.erase("skins");
+        doc.erase("materials");
+        doc.erase("textures");
+        doc.erase("images");
+        doc.erase("samplers");
     } else {
         doc.erase("animations");
     }
@@ -923,7 +936,9 @@ static json create_glb_preview_file(
 
     std::set<int> usedAccessors;
     std::set<int> usedBufferViews;
-    collect_mesh_accessor_refs(doc, usedAccessors, usedBufferViews);
+    if (animationIndex < 0) {
+        collect_mesh_accessor_refs(doc, usedAccessors, usedBufferViews);
+    }
     if (animationIndex >= 0 && doc.contains("animations") && doc["animations"].is_array() && !doc["animations"].empty()) {
         collect_animation_accessor_refs(doc["animations"][0], oldAccessors, oldBufferViews, usedAccessors, usedBufferViews);
         collect_buffer_views_for_accessors(oldAccessors, oldBufferViews, usedAccessors, usedBufferViews);
