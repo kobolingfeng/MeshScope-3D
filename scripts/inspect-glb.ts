@@ -1,14 +1,25 @@
 /// <reference types="bun-types" />
 // inspect-glb.ts — 打印 GLB 文件的 JSON header 摘要
-import { readFileSync, statSync } from 'fs';
+import { closeSync, openSync, readSync, statSync } from 'fs';
 import { argv } from 'process';
 
 for (const path of argv.slice(2)) {
+    let fd = -1;
     try {
-        const data = readFileSync(path);
-        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        const jsonLen = view.getUint32(12, true);
-        const jsonText = new TextDecoder().decode(data.subarray(20, 20 + jsonLen));
+        fd = openSync(path, 'r');
+        const header = Buffer.alloc(20);
+        readSync(fd, header, 0, header.length, 0);
+        const magic = header.readUInt32LE(0);
+        const version = header.readUInt32LE(4);
+        const jsonLen = header.readUInt32LE(12);
+        const chunkType = header.toString('ascii', 16, 20);
+        if (magic !== 0x46546c67 || version !== 2 || chunkType !== 'JSON') {
+            throw new Error('不是 GLB v2 JSON 首块');
+        }
+
+        const jsonBytes = Buffer.alloc(jsonLen);
+        readSync(fd, jsonBytes, 0, jsonLen, 20);
+        const jsonText = new TextDecoder().decode(jsonBytes);
         const obj = JSON.parse(jsonText);
         const stat = statSync(path);
         console.log(`\n[${path}]`);
@@ -37,5 +48,7 @@ for (const path of argv.slice(2)) {
         }
     } catch (error) {
         console.log(`\n[${path}] ERROR: ${(error as Error).message}`);
+    } finally {
+        if (fd >= 0) closeSync(fd);
     }
 }
