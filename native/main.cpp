@@ -44,6 +44,7 @@
 #include <atomic>
 #include <algorithm>
 #include <set>
+#include <system_error>
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "ole32.lib")
@@ -406,6 +407,36 @@ static std::string make_local_file_token() {
     return std::to_string(GetCurrentProcessId())
         + "-" + std::to_string(GetTickCount64())
         + "-" + std::to_string(seq);
+}
+
+static void cleanup_preview_cache_dir(const std::wstring& cacheDir, size_t maxFiles = 512) {
+    std::error_code ec;
+    if (!fspath::exists(cacheDir, ec)) return;
+
+    std::vector<std::pair<fspath::file_time_type, fspath::path>> files;
+    for (fspath::directory_iterator it(cacheDir, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code entryEc;
+        if (!it->is_regular_file(entryEc) || entryEc) continue;
+        auto ext = it->path().extension().wstring();
+        std::transform(ext.begin(), ext.end(), ext.begin(), [](wchar_t ch) {
+            return static_cast<wchar_t>(std::towlower(ch));
+        });
+        if (ext != L".glb" && ext != L".bin") continue;
+        const auto stamp = fspath::last_write_time(it->path(), entryEc);
+        if (entryEc) continue;
+        files.emplace_back(stamp, it->path());
+    }
+
+    if (files.size() <= maxFiles) return;
+    std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) {
+        return a.first < b.first;
+    });
+
+    const size_t deleteCount = files.size() - maxFiles;
+    for (size_t i = 0; i < deleteCount; ++i) {
+        std::error_code removeEc;
+        fspath::remove(files[i].second, removeEc);
+    }
 }
 
 static std::string decode_url_component(const std::string& value) {
@@ -950,6 +981,7 @@ static json create_glb_preview_file(
     const auto token = make_local_file_token();
     const std::wstring cacheDir = app_data_dir() + L"\\preview-cache";
     fspath::create_directories(cacheDir);
+    cleanup_preview_cache_dir(cacheDir);
     const std::wstring previewPath = cacheDir + L"\\" + U2W(token) + L".glb";
     const std::wstring tempBinPath = cacheDir + L"\\" + U2W(token) + L".bin";
 
