@@ -1227,7 +1227,6 @@ function setupKeyboardShortcuts(): void {
 }
 
 function selectAdjacentTimelineKeyframe(direction: 1 | -1): boolean {
-    if (selectedKeyframeTimes.length === 0) return false;
     const state = viewer.getAnimationState();
     if (!state.hasAnimations || state.duration <= 0) return false;
 
@@ -1235,9 +1234,10 @@ function selectAdjacentTimelineKeyframe(direction: 1 | -1): boolean {
         .sort((a, b) => a - b);
     if (markers.length === 0) return false;
 
-    const anchor = direction > 0
-        ? Math.max(...selectedKeyframeTimes)
-        : Math.min(...selectedKeyframeTimes);
+    const hasSelection = selectedKeyframeTimes.length > 0;
+    const anchor = hasSelection
+        ? (direction > 0 ? Math.max(...selectedKeyframeTimes) : Math.min(...selectedKeyframeTimes))
+        : state.time;
     const target = direction > 0
         ? markers.find((time) => time > anchor + 1e-4)
         : [...markers].reverse().find((time) => time < anchor - 1e-4);
