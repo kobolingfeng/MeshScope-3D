@@ -8,6 +8,7 @@ import {
     type AnimationTrackMeta,
     type BonePoseSnapshot,
     type BoneTransformMode,
+    type BoneTransformSpace,
     type MaterialEditMode,
     type MaterialEditSnapshot,
     type SkeletonEditorState,
@@ -280,6 +281,8 @@ const animBoneList = $('anim-bone-list');
 const animSelectedBone = $('anim-selected-bone');
 const animModeTranslate = $<HTMLButtonElement>('anim-mode-translate');
 const animModeRotate = $<HTMLButtonElement>('anim-mode-rotate');
+const animSpaceLocal = $<HTMLButtonElement>('anim-space-local');
+const animSpaceWorld = $<HTMLButtonElement>('anim-space-world');
 const animFkMode = $<HTMLButtonElement>('anim-fk-mode');
 const animIkMode = $<HTMLButtonElement>('anim-ik-mode');
 const animIkChainLengthInput = $<HTMLInputElement>('anim-ik-chain-length');
@@ -1182,6 +1185,14 @@ function setupKeyboardShortcuts(): void {
             return;
         }
 
+        // G — toggle local/global transform space.
+        if (lowerKey === 'g') {
+            event.preventDefault();
+            const skeleton = viewer.getSkeletonEditorState({ includeKeyframes: false });
+            setBoneTransformSpace(skeleton.transformSpace === 'local' ? 'world' : 'local');
+            return;
+        }
+
         // , / .  — previous / next keyframe.
         if (key === ',' || key === '.') {
             if (!state.hasAnimations) return;
@@ -1421,6 +1432,14 @@ function setupAnimationControls(): void {
 
     animModeTranslate.addEventListener('click', () => {
         setBoneTransformMode('translate');
+    });
+
+    animSpaceLocal.addEventListener('click', () => {
+        setBoneTransformSpace('local');
+    });
+
+    animSpaceWorld.addEventListener('click', () => {
+        setBoneTransformSpace('world');
     });
 
     animFkMode.addEventListener('click', () => {
@@ -2047,6 +2066,11 @@ function setBoneTransformMode(mode: BoneTransformMode): void {
     syncAnimationEditor();
 }
 
+function setBoneTransformSpace(space: BoneTransformSpace): void {
+    viewer.setBoneTransformSpace(space);
+    syncAnimationEditor();
+}
+
 function setBoneSolverMode(ikEnabled: boolean): void {
     viewer.setIkEnabled(ikEnabled);
     syncAnimationEditor();
@@ -2113,6 +2137,8 @@ function renderSkeletonControls(state: SkeletonEditorState): void {
     animBoneSearch.disabled = !state.hasSkeleton;
     animModeRotate.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animModeTranslate.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    animSpaceLocal.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    animSpaceWorld.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animFkMode.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animIkMode.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animIkChainLengthInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !state.ikEnabled;
@@ -2126,6 +2152,7 @@ function renderSkeletonControls(state: SkeletonEditorState): void {
     animSelectedBone.textContent = state.selectedBoneName || '—';
     syncBoneSolverModeButtons(state.ikEnabled);
     syncTransformModeButtons(state.transformMode);
+    syncTransformSpaceButtons(state.transformSpace);
 
     const query = normalizeSearchText(animBoneSearch.value);
     let bones = state.bones.filter((bone) => {
@@ -2166,6 +2193,14 @@ function syncTransformModeButtons(mode: BoneTransformMode): void {
     animModeRotate.setAttribute('aria-pressed', String(rotateActive));
     animModeTranslate.classList.toggle('active', !rotateActive);
     animModeTranslate.setAttribute('aria-pressed', String(!rotateActive));
+}
+
+function syncTransformSpaceButtons(space: BoneTransformSpace): void {
+    const localActive = space === 'local';
+    animSpaceLocal.classList.toggle('active', localActive);
+    animSpaceLocal.setAttribute('aria-pressed', String(localActive));
+    animSpaceWorld.classList.toggle('active', !localActive);
+    animSpaceWorld.setAttribute('aria-pressed', String(!localActive));
 }
 
 function syncBoneSolverModeButtons(ikEnabled: boolean): void {
@@ -4365,6 +4400,7 @@ function areBonePoseSnapshotsEqual(a: BonePoseSnapshot, b: BonePoseSnapshot): bo
     if (a.selectedBoneIndex !== b.selectedBoneIndex) return false;
     if (a.ikEnabled !== b.ikEnabled) return false;
     if (a.transformMode !== b.transformMode) return false;
+    if (a.transformSpace !== b.transformSpace) return false;
     if (!areNullableNumberTuplesNearlyEqual(a.ikTargetPosition, b.ikTargetPosition)) return false;
     if (a.bones.length !== b.bones.length) return false;
 

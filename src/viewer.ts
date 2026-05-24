@@ -175,6 +175,7 @@ export type BonePoseSnapshot = {
     selectedBoneIndex: number;
     ikEnabled: boolean;
     transformMode: BoneTransformMode;
+    transformSpace: BoneTransformSpace;
     ikTargetPosition: [number, number, number] | null;
     bones: Array<{
         index: number;
@@ -195,6 +196,7 @@ export type AnimationTrackVectorEdit = {
 export type AnimationEasingCurve = [number, number, number, number];
 export type AnimationBlendMode = 'normal' | 'additive';
 export type BoneTransformMode = 'translate' | 'rotate';
+export type BoneTransformSpace = 'local' | 'world';
 
 export type SkeletonBoneMeta = {
     index: number;
@@ -217,6 +219,7 @@ export type SkeletonEditorState = {
     selectedBoneIndex: number;
     selectedBoneName: string;
     transformMode: BoneTransformMode;
+    transformSpace: BoneTransformSpace;
     ikEnabled: boolean;
     ikChainLength: number;
     keyframes: AnimationTimelineMarker[];
@@ -367,6 +370,7 @@ export class Viewer {
     private pointerNdc = new Vector2();
     private transformControls: TransformControls;
     private boneTransformMode: BoneTransformMode = 'rotate';
+    private boneTransformSpace: BoneTransformSpace = 'local';
     private boneRotationStepRadians = DEFAULT_BONE_ROTATION_STEP_RADIANS;
     private boneTranslationStepRatio = DEFAULT_BONE_TRANSLATION_STEP_RATIO;
     private transformDragging = false;
@@ -439,7 +443,7 @@ export class Viewer {
 
         this.transformControls = new TransformControls(this.camera, this.renderer.domElement);
         this.transformControls.setMode(this.boneTransformMode);
-        this.transformControls.setSpace('local');
+        this.transformControls.setSpace(this.boneTransformSpace);
         this.transformControls.visible = false;
         this.scene.add(this.transformControls);
         this.transformControls.addEventListener('dragging-changed', (event) => {
@@ -1236,6 +1240,7 @@ export class Viewer {
             selectedBoneIndex: selectedIndex,
             selectedBoneName: selectedName,
             transformMode: this.boneTransformMode,
+            transformSpace: this.boneTransformSpace,
             ikEnabled: this.ikEnabled,
             ikChainLength: this.ikChainMaxLength,
             keyframes: includeKeyframes ? this.getTimelineMarkers() : [],
@@ -1279,6 +1284,13 @@ export class Viewer {
     setBoneTransformMode(mode: BoneTransformMode): void {
         this.boneTransformMode = mode;
         if (!this.ikEnabled) this.transformControls.setMode(mode);
+        this.attachTransformTarget();
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+    }
+
+    setBoneTransformSpace(space: BoneTransformSpace): void {
+        this.boneTransformSpace = space;
+        this.transformControls.setSpace(space);
         this.attachTransformTarget();
         this.onSkeletonChanged(this.getSkeletonEditorState());
     }
@@ -1625,6 +1637,7 @@ export class Viewer {
             selectedBoneIndex: this.selectedBone ? this.bones.indexOf(this.selectedBone) : -1,
             ikEnabled: this.ikEnabled,
             transformMode: this.boneTransformMode,
+            transformSpace: this.boneTransformSpace,
             ikTargetPosition: this.ikTarget
                 ? [this.ikTarget.position.x, this.ikTarget.position.y, this.ikTarget.position.z]
                 : null,
@@ -1654,6 +1667,7 @@ export class Viewer {
 
         this.selectedBone = this.bones[snapshot.selectedBoneIndex] ?? this.selectedBone ?? null;
         this.boneTransformMode = snapshot.transformMode;
+        this.boneTransformSpace = snapshot.transformSpace;
         this.ikEnabled = snapshot.ikEnabled && Boolean(this.selectedBone);
         this.refreshIkChain();
         if (snapshot.ikTargetPosition && this.ikEnabled) {
@@ -2550,9 +2564,11 @@ export class Viewer {
         if (this.ikEnabled && this.selectedBone) {
             this.ensureIkTarget();
             this.transformControls.setMode('translate');
+            this.transformControls.setSpace(this.boneTransformSpace);
             if (this.ikTarget) this.transformControls.attach(this.ikTarget);
         } else if (this.selectedBone) {
             this.transformControls.setMode(this.boneTransformMode);
+            this.transformControls.setSpace(this.boneTransformSpace);
             this.transformControls.attach(this.selectedBone);
         }
 
