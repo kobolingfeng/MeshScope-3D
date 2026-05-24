@@ -1033,27 +1033,39 @@ function setupKeyboardShortcuts(): void {
 
         const key = event.key;
         const code = event.code;
+        const lowerKey = key.toLowerCase();
         const noMods = !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey;
         const ctrlOnly = (event.ctrlKey || event.metaKey) && !event.altKey;
+
+        if (ctrlOnly && !event.shiftKey && lowerKey === 'c' && selectedKeyframeTimes.length > 0) {
+            event.preventDefault();
+            copySelectedTimelineKeyframes();
+            return;
+        }
+        if (ctrlOnly && !event.shiftKey && lowerKey === 'v' && keyframeClipboard) {
+            event.preventDefault();
+            pasteTimelineKeyframesAtPlayhead();
+            return;
+        }
 
         // Ctrl+C / Ctrl+V / Ctrl+Shift+V — bone pose clipboard.
         // Only when the skeleton overlay is visible (clear "rigging mode" signal),
         // so we don't steal default browser copy/paste outside that mode.
         const skeletonActive = viewer.getSkeletonEditorState({ includeKeyframes: false }).skeletonVisible
             && Boolean(viewer.getSelectedBoneLocalTrs());
-        if (ctrlOnly && skeletonActive && key.toLowerCase() === 'c' && !event.shiftKey) {
+        if (ctrlOnly && skeletonActive && lowerKey === 'c' && !event.shiftKey) {
             event.preventDefault();
             copySelectedBonePose();
             return;
         }
-        if (ctrlOnly && skeletonActive && key.toLowerCase() === 'v' && !event.shiftKey) {
+        if (ctrlOnly && skeletonActive && lowerKey === 'v' && !event.shiftKey) {
             if (bonePoseClipboard) {
                 event.preventDefault();
                 pasteBonePose({ mirror: false });
                 return;
             }
         }
-        if (ctrlOnly && skeletonActive && key.toLowerCase() === 'v' && event.shiftKey) {
+        if (ctrlOnly && skeletonActive && lowerKey === 'v' && event.shiftKey) {
             if (bonePoseClipboard) {
                 event.preventDefault();
                 pasteBonePose({ mirror: true });
@@ -1078,7 +1090,6 @@ function setupKeyboardShortcuts(): void {
         if (!noMods) return;
 
         const state = viewer.getAnimationState();
-        const lowerKey = key.toLowerCase();
 
         // Arrow Left / Right — selected timeline keyframe previous / next.
         if (key === 'ArrowLeft' || key === 'ArrowRight') {
