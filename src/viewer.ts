@@ -439,6 +439,7 @@ export class Viewer {
         this.transformControls.addEventListener('objectChange', () => {
             if (this.transformDragging) this.transformChangedDuringDrag = true;
             if (this.ikEnabled) this.solveIk();
+            this.refreshActiveRootMatrices();
             this.updateSkeletonOverlay();
             this.onSkeletonChanged(this.getSkeletonEditorState());
         });
@@ -1532,6 +1533,7 @@ export class Viewer {
         if (trs.scale) bone.scale.fromArray(trs.scale);
         bone.updateMatrixWorld(true);
         if (this.ikEnabled && bone === this.selectedBone) this.solveIk();
+        this.refreshActiveRootMatrices();
         this.updateSkeletonOverlay();
         const clip = this.ensureActiveAnimationClip();
         if (clip) {
@@ -1559,6 +1561,7 @@ export class Viewer {
         target.quaternion.fromArray(mirrored.quaternion);
         target.scale.fromArray(mirrored.scale);
         target.updateMatrixWorld(true);
+        this.refreshActiveRootMatrices();
 
         const clip = this.ensureActiveAnimationClip();
         if (clip) this.autoKeyframeBonePoseTargets(clip, [target]);
@@ -1591,6 +1594,7 @@ export class Viewer {
 
         bone.updateMatrixWorld(true);
         if (this.ikEnabled) this.solveIk();
+        this.refreshActiveRootMatrices();
         this.updateSkeletonOverlay();
         this.autoKeyframeCurrentBonePose();
         this.onSkeletonChanged(this.getSkeletonEditorState());
@@ -2102,6 +2106,10 @@ export class Viewer {
         this.onSkeletonChanged(this.getSkeletonEditorState());
     }
 
+    private refreshActiveRootMatrices(): void {
+        this.getActiveRoot()?.updateMatrixWorld(true);
+    }
+
     private disposeSkeletonEditor(): void {
         this.transformControls.detach();
         this.disposeSkeletonOverlay();
@@ -2141,7 +2149,7 @@ export class Viewer {
             this.handleToBone.set(handle, bone);
             this.scene.add(handle);
 
-            if (bone.parent && (bone.parent as Bone).isBone) {
+            if (hasBoneSegment(bone)) {
                 const line = new Line(
                     new BufferGeometry().setFromPoints([new Vector3(), new Vector3()]),
                     this.boneLineMaterial,
@@ -2195,8 +2203,9 @@ export class Viewer {
             }
 
             const line = this.boneLines.get(bone);
-            if (!line || !bone.parent) continue;
-            bone.parent.getWorldPosition(start);
+            if (!line) continue;
+            bone.getWorldPosition(start);
+            getBoneTailWorldPosition(bone, end, scale * 2.4);
             const positions = line.geometry.getAttribute('position') as BufferAttribute;
             positions.setXYZ(0, start.x, start.y, start.z);
             positions.setXYZ(1, end.x, end.y, end.z);
@@ -2483,6 +2492,34 @@ function collectBones(root: Object3D): Bone[] {
         if ((node as Bone).isBone) bones.push(node as Bone);
     });
     return bones;
+}
+
+function getBoneChildren(bone: Bone): Bone[] {
+    return bone.children.filter((child): child is Bone => (child as Bone).isBone);
+}
+
+function hasBoneSegment(bone: Bone): boolean {
+    return getBoneChildren(bone).length > 0 || Boolean(bone.parent && (bone.parent as Bone).isBone);
+}
+
+function getBoneTailWorldPosition(bone: Bone, target: Vector3, fallbackLength: number): Vector3 {
+    const children = getBoneChildren(bone);
+    if (children.length === 1) return children[0].getWorldPosition(target);
+    if (children.length > 1) {
+        target.set(0, 0, 0);
+        for (const child of children) target.add(child.getWorldPosition(new Vector3()));
+        return target.multiplyScalar(1 / children.length);
+    }
+
+    const head = bone.getWorldPosition(new Vector3());
+    if (bone.parent && (bone.parent as Bone).isBone) {
+        const parent = bone.parent.getWorldPosition(new Vector3());
+        const direction = head.clone().sub(parent);
+        if (direction.lengthSq() > 1e-10) {
+            return target.copy(head).add(direction.normalize().multiplyScalar(Math.max(direction.length() * 0.7, fallbackLength)));
+        }
+    }
+    return target.copy(head).add(new Vector3(0, fallbackLength, 0));
 }
 
 function getBoneDisplayName(bone: Bone, index: number): string {
