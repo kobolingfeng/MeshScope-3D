@@ -1297,6 +1297,13 @@ function setupKeyboardShortcuts(): void {
 
         const state = viewer.getAnimationState();
 
+        if (key === 'PageUp' || key === 'PageDown') {
+            if (!state.hasAnimations || state.clips.length < 2) return;
+            event.preventDefault();
+            void selectAdjacentAnimationClip(key === 'PageDown' ? 1 : -1);
+            return;
+        }
+
         if (key === 'Escape' && selectedKeyframeTimes.length > 0) {
             event.preventDefault();
             selectedKeyframeTimes = [];
@@ -2103,6 +2110,26 @@ async function activateAnimationClip(index: number, autoPlay: boolean): Promise<
         return;
     }
     viewer.selectAnimationClip(index, { autoPlay });
+}
+
+async function selectAdjacentAnimationClip(direction: 1 | -1): Promise<void> {
+    const state = viewer.getAnimationState();
+    const count = state.clips.length;
+    if (!state.hasAnimations || count < 2) return;
+
+    const active = state.activeIndex >= 0 ? state.activeIndex : (direction > 0 ? -1 : 0);
+    const nextIndex = (active + direction + count) % count;
+    const wasPlaying = state.playing;
+    await activateAnimationClip(nextIndex, wasPlaying);
+
+    const nextState = viewer.getAnimationState();
+    selectedKeyframeTimes = [];
+    refreshAnimationBar(nextState);
+    syncAnimationEditor();
+    if (nextState.activeIndex === nextIndex) {
+        const clip = nextState.clips.find((item) => item.index === nextIndex);
+        showToast(`已切换动画: ${clip?.name || `Clip ${nextIndex + 1}`}`, 'success');
+    }
 }
 
 async function ensureAnimationClipLoaded(
