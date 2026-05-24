@@ -1116,6 +1116,12 @@ function setupKeyboardShortcuts(): void {
             return;
         }
 
+        if (event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey && (key === 'ArrowLeft' || key === 'ArrowRight')) {
+            event.preventDefault();
+            nudgeSelectedTimelineKeyframes(key === 'ArrowRight' ? 1 : -1);
+            return;
+        }
+
         if (!noMods) return;
 
         const state = viewer.getAnimationState();
@@ -1268,6 +1274,28 @@ function selectAdjacentTimelineKeyframe(direction: 1 | -1): boolean {
     setSelectedKeyframeTimes([target]);
     viewer.seekAnimation(target);
     renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+    return true;
+}
+
+function nudgeSelectedTimelineKeyframes(direction: 1 | -1): boolean {
+    const state = viewer.getAnimationState();
+    if (!state.hasAnimations || state.duration <= 0 || selectedKeyframeTimes.length === 0) return false;
+
+    const step = timelineSnapEnabled ? 1 / timelineFps : Math.max(state.duration / 1000, 0.001);
+    const fromTimes = [...selectedKeyframeTimes];
+    const toTimes = fromTimes.map((time) => snapTimelineTime(time + step * direction, state.duration));
+    if (fromTimes.every((time, index) => nearlyEqualTimeForUi(time, toTimes[index] ?? time))) return false;
+
+    runAnimationEdit(direction > 0 ? '右移关键帧' : '左移关键帧', () => {
+        viewer.moveKeyframesAtTimes(fromTimes, toTimes);
+    });
+    setSelectedKeyframeTimes(toTimes);
+    viewer.seekAnimation(direction > 0 ? Math.max(...toTimes) : Math.min(...toTimes));
+    renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+    const label = timelineSnapEnabled
+        ? `${direction > 0 ? '+1' : '-1'} 帧`
+        : `${direction > 0 ? '+' : '-'}${step.toFixed(3)}s`;
+    showToast(`已移动 ${toTimes.length} 个关键帧 · ${label}`, 'success');
     return true;
 }
 
