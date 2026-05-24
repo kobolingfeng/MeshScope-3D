@@ -229,6 +229,7 @@ export type SkeletonEditorState = {
     selectedBoneIndex: number;
     selectedBoneName: string;
     selectedBoneDescendantCount: number;
+    selectedBoneCurrentKeyed: boolean;
     transformMode: BoneTransformMode;
     transformSpace: BoneTransformSpace;
     ikEnabled: boolean;
@@ -1326,6 +1327,9 @@ export class Viewer {
             selectedBoneDescendantCount: this.selectedBone
                 ? this.bones.filter((bone) => this.isBoneDescendantOf(bone, this.selectedBone!)).length
                 : 0,
+            selectedBoneCurrentKeyed: includeBoneKeyframes && this.selectedBone
+                ? this.hasBoneKeyframeAtTime(this.selectedBone, this.getCurrentKeyframeTime())
+                : false,
             transformMode: this.boneTransformMode,
             transformSpace: this.boneTransformSpace,
             ikEnabled: this.ikEnabled,
@@ -3175,6 +3179,15 @@ export class Viewer {
 
         for (const [bone, times] of timesByBone) counts.set(bone, times.size);
         return counts;
+    }
+
+    private hasBoneKeyframeAtTime(bone: Bone, time: number): boolean {
+        const clip = this.animClips[this.activeClipIndex];
+        if (!clip) return false;
+        return clip.tracks.some((track) => {
+            if (!trackTargetsBone(track, bone)) return false;
+            return Array.from(track.times as ArrayLike<number>).some((item) => nearlyEqualTime(item, time));
+        });
     }
 
     private disposeAnimations(): void {

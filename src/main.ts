@@ -288,6 +288,7 @@ const animBoneSearch = $<HTMLInputElement>('anim-bone-search');
 const animBoneList = $('anim-bone-list');
 const animSelectedBone = $('anim-selected-bone');
 const animBoneInfluence = $('anim-bone-influence');
+const animBoneCurrentKey = $('anim-bone-current-key');
 const btnFrameSelectedBone = $<HTMLButtonElement>('btn-frame-selected-bone');
 const btnSelectMirrorBone = $<HTMLButtonElement>('btn-select-mirror-bone');
 const animModeTranslate = $<HTMLButtonElement>('anim-mode-translate');
@@ -2929,6 +2930,8 @@ function renderSkeletonControls(
     animBoneInfluence.title = state.ikEnabled
         ? 'IK 会反解当前骨骼的父级链'
         : 'FK 会让选中骨骼的全部子级继承旋转或移动';
+    animBoneCurrentKey.textContent = getBoneCurrentKeyLabel(state);
+    animBoneCurrentKey.title = '当前播放头位置是否已有选中骨骼关键帧';
     btnFrameSelectedBone.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnSelectMirrorBone.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     syncBoneTransformFields(state);
@@ -2967,6 +2970,11 @@ function getBoneInfluenceLabel(state: SkeletonEditorState): string {
     if (!state.hasSkeleton || state.selectedBoneIndex < 0) return '—';
     if (state.ikEnabled) return `IK 链 ${state.ikChainActiveLength}`;
     return `FK 子级 ${state.selectedBoneDescendantCount}`;
+}
+
+function getBoneCurrentKeyLabel(state: SkeletonEditorState): string {
+    if (!state.hasSkeleton || state.selectedBoneIndex < 0) return '—';
+    return state.selectedBoneCurrentKeyed ? '已打键' : '未打键';
 }
 
 function syncBoneTransformFields(state: SkeletonEditorState): void {
