@@ -171,6 +171,11 @@ export type AnimationClipSnapshot = {
     }>;
 };
 
+export type AnimationLibrarySnapshot = {
+    activeIndex: number;
+    clips: AnimationClipSnapshot[];
+};
+
 export type BonePoseSnapshot = {
     selectedBoneIndex: number;
     ikEnabled: boolean;
@@ -1494,6 +1499,62 @@ export class Viewer {
                 values: Array.from(track.values as ArrayLike<number>),
             })),
         };
+    }
+
+    captureAnimationLibrarySnapshot(): AnimationLibrarySnapshot {
+        return {
+            activeIndex: this.activeClipIndex,
+            clips: this.animClips.map((clip, index) => ({
+                clipIndex: index,
+                clipName: clip.name,
+                duration: clip.duration,
+                tracks: clip.tracks.map((track, trackIndex) => ({
+                    index: trackIndex,
+                    name: track.name,
+                    times: Array.from(track.times as ArrayLike<number>),
+                    values: Array.from(track.values as ArrayLike<number>),
+                })),
+            })),
+        };
+    }
+
+    restoreAnimationLibrarySnapshot(snapshot: AnimationLibrarySnapshot): void {
+        const root = this.getActiveRoot();
+        if (this.mixer) {
+            this.mixer.stopAllAction();
+            if (this.mixerRoot) this.mixer.uncacheRoot(this.mixerRoot);
+        }
+        this.mixer = null;
+        this.mixerRoot = null;
+        this.activeAction = null;
+        this.animationPlaying = false;
+        this.animationFinished = false;
+        this.lastReportedTime = -1;
+
+        this.animClips = snapshot.clips.map((clipSnapshot) => new AnimationClip(
+            clipSnapshot.clipName,
+            Math.max(0.001, clipSnapshot.duration),
+            clipSnapshot.tracks.map((trackSnapshot) => createTrackFromSnapshot(
+                trackSnapshot.name,
+                trackSnapshot.times,
+                trackSnapshot.values,
+            )),
+        ));
+
+        if (root) {
+            this.bindAnimationClipsToRoot(root);
+            if (this.animClips.length > 0) this.ensureAnimationMixer(root);
+        }
+        this.refreshAnimationClipMetas();
+        const nextIndex = this.animClips.length > 0
+            ? clampIndex(snapshot.activeIndex, this.animClips.length)
+            : -1;
+        if (nextIndex >= 0) this.selectAnimationClip(nextIndex, { autoPlay: false });
+        else {
+            this.activeClipIndex = -1;
+            this.onAnimationsChanged(this.getAnimationState());
+        }
+        this.onSkeletonChanged(this.getSkeletonEditorState());
     }
 
     captureKeyframesAtTimes(times: number[]): AnimationClipSnapshot | null {
@@ -3644,6 +3705,12 @@ function areTextureTransformsEqual(a: TextureTransform, b: TextureTransform): bo
 
 function nearlyEqual(a: number, b: number): boolean {
     return Math.abs(a - b) < 1e-4;
+}
+
+function clampIndex(index: number, length: number): number {
+    if (length <= 0) return -1;
+    if (!Number.isFinite(index)) return 0;
+    return Math.max(0, Math.min(length - 1, Math.round(index)));
 }
 
 function getTextureWidth(texture: Texture | null): number | null {

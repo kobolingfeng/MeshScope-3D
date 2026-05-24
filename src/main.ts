@@ -4,6 +4,7 @@ import {
     type AnimationClipSnapshot,
     type AnimationEasingCurve,
     type AnimationEditorState,
+    type AnimationLibrarySnapshot,
     type AnimationPlaybackState,
     type AnimationTrackMeta,
     type BonePoseSnapshot,
@@ -96,6 +97,11 @@ type UndoEntry =
         kind: 'animation';
         label: string;
         snapshot: AnimationClipSnapshot;
+    }
+    | {
+        kind: 'animation-library';
+        label: string;
+        snapshot: AnimationLibrarySnapshot;
     }
     | {
         kind: 'bone-pose';
@@ -2057,14 +2063,16 @@ async function ensureAnimationClipLoaded(
 }
 
 function createRestPoseClip(): void {
-    const index = viewer.createRestPoseAnimationClip('T-Pose Action');
+    let index = -1;
+    runAnimationLibraryEdit('新建 T-Pose 动画', () => {
+        index = viewer.createRestPoseAnimationClip('T-Pose Action');
+    });
     if (index < 0) {
         showToast('当前模型没有可创建动画的骨骼', 'error');
         return;
     }
 
     selectedKeyframeTimes = [];
-    markActiveDocumentDirty();
     openAnimationInspector();
     refreshAnimationBar(viewer.getAnimationState());
     syncAnimationEditor();
@@ -2072,14 +2080,16 @@ function createRestPoseClip(): void {
 }
 
 function createCurrentPoseClip(): void {
-    const index = viewer.createCurrentPoseAnimationClip('Current Pose Action');
+    let index = -1;
+    runAnimationLibraryEdit('新建当前姿态动画', () => {
+        index = viewer.createCurrentPoseAnimationClip('Current Pose Action');
+    });
     if (index < 0) {
         showToast('当前模型没有可创建动画的骨骼', 'error');
         return;
     }
 
     selectedKeyframeTimes = [];
-    markActiveDocumentDirty();
     openAnimationInspector();
     refreshAnimationBar(viewer.getAnimationState());
     syncAnimationEditor();
@@ -2228,12 +2238,14 @@ function pasteTimelineKeyframesAtPlayhead(): void {
 }
 
 function duplicateClipAt(index: number): void {
-    const newIndex = viewer.duplicateAnimationClip(index, { activate: true });
+    let newIndex = -1;
+    runAnimationLibraryEdit('复制动画片段', () => {
+        newIndex = viewer.duplicateAnimationClip(index, { activate: true });
+    });
     if (newIndex < 0) {
         showToast('复制失败', 'error');
         return;
     }
-    markActiveDocumentDirty();
     showToast('动画已复制', 'success');
 }
 
@@ -2242,11 +2254,14 @@ function deleteClipAt(index: number): void {
     const clip = state.clips[index];
     if (!clip) return;
     if (!window.confirm(`确定删除动画"${clip.name}"？此操作不可撤销。`)) return;
-    if (!viewer.deleteAnimationClip(index)) {
+    let deleted = false;
+    runAnimationLibraryEdit('删除动画片段', () => {
+        deleted = viewer.deleteAnimationClip(index);
+    });
+    if (!deleted) {
         showToast('删除失败', 'error');
         return;
     }
-    markActiveDocumentDirty();
     showToast('动画已删除', 'success');
 }
 
@@ -2934,6 +2949,7 @@ function renderHistoryItem(item: {
 
 function getUndoKindLabel(kind: UndoEntry['kind']): string {
     if (kind === 'animation') return '动画';
+    if (kind === 'animation-library') return '动画库';
     if (kind === 'bone-pose') return '姿态';
     if (kind === 'material') return '材质';
     if (kind === 'texture') return '贴图';
@@ -4319,6 +4335,21 @@ function runAnimationEdit(label: string, apply: () => void): void {
     syncAnimationEditor();
 }
 
+function runAnimationLibraryEdit(label: string, apply: () => void): void {
+    const snapshot = viewer.captureAnimationLibrarySnapshot();
+    apply();
+    const current = viewer.captureAnimationLibrarySnapshot();
+    if (!areAnimationLibrarySnapshotsEqual(snapshot, current)) {
+        pushUndoEntry({
+            kind: 'animation-library',
+            label,
+            snapshot,
+        });
+    }
+    refreshAnimationBar(viewer.getAnimationState());
+    syncAnimationEditor();
+}
+
 function beginBonePoseUndoTransaction(): void {
     if (suppressUndoRecording || animationPoseUndoDraft.snapshot) return;
     const snapshot = viewer.captureBonePoseSnapshot();
@@ -4500,6 +4531,14 @@ function captureCurrentUndoEntry(template: UndoEntry): UndoEntry | null {
         return snapshot ? { kind: 'animation', label: template.label, snapshot } : null;
     }
 
+    if (template.kind === 'animation-library') {
+        return {
+            kind: 'animation-library',
+            label: template.label,
+            snapshot: viewer.captureAnimationLibrarySnapshot(),
+        };
+    }
+
     if (template.kind === 'bone-pose') {
         const snapshot = viewer.captureBonePoseSnapshot();
         return snapshot ? { kind: 'bone-pose', label: template.label, snapshot } : null;
@@ -4539,6 +4578,14 @@ function applyUndoEntry(entry: UndoEntry): void {
 
     if (entry.kind === 'animation') {
         viewer.restoreAnimationSnapshot(entry.snapshot);
+        refreshAnimationBar(viewer.getAnimationState());
+        syncAnimationEditor();
+        return;
+    }
+
+    if (entry.kind === 'animation-library') {
+        viewer.restoreAnimationLibrarySnapshot(entry.snapshot);
+        selectedKeyframeTimes = [];
         refreshAnimationBar(viewer.getAnimationState());
         syncAnimationEditor();
         return;
@@ -4673,6 +4720,12 @@ function areAnimationSnapshotsEqual(a: AnimationClipSnapshot, b: AnimationClipSn
     }
 
     return true;
+}
+
+function areAnimationLibrarySnapshotsEqual(a: AnimationLibrarySnapshot, b: AnimationLibrarySnapshot): boolean {
+    if (a.activeIndex !== b.activeIndex) return false;
+    if (a.clips.length !== b.clips.length) return false;
+    return a.clips.every((clip, index) => areAnimationSnapshotsEqual(clip, b.clips[index]));
 }
 
 function areBonePoseSnapshotsEqual(a: BonePoseSnapshot, b: BonePoseSnapshot): boolean {
