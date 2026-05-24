@@ -301,6 +301,7 @@ const btnPasteBonePose = $<HTMLButtonElement>('btn-paste-bone-pose');
 const btnCopyBoneChainPose = $<HTMLButtonElement>('btn-copy-bone-chain-pose');
 const btnPasteBoneChainPose = $<HTMLButtonElement>('btn-paste-bone-chain-pose');
 const btnMirrorBonePose = $<HTMLButtonElement>('btn-mirror-bone-pose');
+const btnMirrorBoneChainPose = $<HTMLButtonElement>('btn-mirror-bone-chain-pose');
 const btnMirrorAnimation = $<HTMLButtonElement>('btn-mirror-animation');
 const btnAnimHistoryUndo = $<HTMLButtonElement>('btn-anim-history-undo');
 const btnAnimHistoryRedo = $<HTMLButtonElement>('btn-anim-history-redo');
@@ -1082,6 +1083,31 @@ function pasteBoneChainPose(opts: { mirror: boolean }): void {
     showToast(count > 0 ? `已粘贴 ${count} 根骨骼姿态` : '没有匹配的骨骼可粘贴', count > 0 ? 'success' : 'info');
 }
 
+function mirrorSelectedBoneChainPose(): void {
+    const items = viewer.getSelectedBoneChainLocalTrs();
+    if (items.length === 0) {
+        showToast('请先选中一个骨骼子链', 'info');
+        return;
+    }
+
+    const targets = items.map((item) => {
+        const targetName = findMirroredBoneName(item.boneName);
+        if (!targetName) return null;
+        return {
+            boneName: targetName,
+            position: [-item.position[0], item.position[1], item.position[2]] as [number, number, number],
+            quaternion: [item.quaternion[0], -item.quaternion[1], -item.quaternion[2], item.quaternion[3]] as [number, number, number, number],
+            scale: item.scale,
+        };
+    }).filter((item): item is BonePoseClipboardItem => Boolean(item));
+
+    let count = 0;
+    runAnimationEdit('镜像骨骼子链姿态', () => {
+        count = viewer.applyLocalTrsToBones(targets);
+    });
+    showToast(count > 0 ? `已镜像 ${count} 根骨骼` : '没找到可镜像的子链骨骼', count > 0 ? 'success' : 'info');
+}
+
 function findMirroredBoneName(name: string): string | null {
     if (!name) return null;
     const replacements: Array<[RegExp, string]> = [
@@ -1634,6 +1660,10 @@ function setupAnimationControls(): void {
         mirrorSelectedBonePose();
     });
 
+    btnMirrorBoneChainPose.addEventListener('click', () => {
+        mirrorSelectedBoneChainPose();
+    });
+
     btnMirrorAnimation.addEventListener('click', () => {
         void mirrorActiveAnimationClip();
     });
@@ -1900,6 +1930,7 @@ function syncAnimationClipTools(state: AnimationPlaybackState): void {
     btnResetBonePose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
     btnResetBoneChainPose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
     btnMirrorBonePose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
+    btnMirrorBoneChainPose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
     btnMirrorAnimation.disabled = !hasSkeleton || !state.hasAnimations || state.activeIndex < 0;
 }
 
@@ -2288,6 +2319,7 @@ function renderSkeletonControls(state: SkeletonEditorState): void {
     btnPasteBonePose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !bonePoseClipboard;
     btnCopyBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnPasteBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !bonePoseClipboard;
+    btnMirrorBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animSelectedBone.textContent = state.selectedBoneName || '—';
     syncBoneSolverModeButtons(state.ikEnabled);
     syncTransformModeButtons(state.transformMode);
