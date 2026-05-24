@@ -1758,7 +1758,7 @@ function flushBoneStepUndoTransaction(): void {
 
 function updateStatusFrameChip(animState = viewer.getAnimationState()): void {
     if (!statusFrame || !statusFrameValue) return;
-    if (animState.hasAnimations) {
+    if (animState.hasAnimations && animState.activeIndex >= 0 && animState.duration > 0) {
         statusFrame.hidden = false;
         const currentFrame = Math.round(animState.time * timelineFps);
         const totalFrame = Math.round(animState.duration * timelineFps);
