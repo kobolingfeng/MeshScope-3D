@@ -313,6 +313,8 @@ const btnCopyBonePose = $<HTMLButtonElement>('btn-copy-bone-pose');
 const btnPasteBonePose = $<HTMLButtonElement>('btn-paste-bone-pose');
 const btnCopyBoneChainPose = $<HTMLButtonElement>('btn-copy-bone-chain-pose');
 const btnPasteBoneChainPose = $<HTMLButtonElement>('btn-paste-bone-chain-pose');
+const btnCopyAllBonesPose = $<HTMLButtonElement>('btn-copy-all-bones-pose');
+const btnPasteAllBonesPose = $<HTMLButtonElement>('btn-paste-all-bones-pose');
 const btnMirrorBonePose = $<HTMLButtonElement>('btn-mirror-bone-pose');
 const btnMirrorBoneChainPose = $<HTMLButtonElement>('btn-mirror-bone-chain-pose');
 const btnMirrorAnimation = $<HTMLButtonElement>('btn-mirror-animation');
@@ -364,7 +366,7 @@ type BonePoseClipboardItem = {
 };
 
 type BonePoseClipboard = {
-    mode: 'single' | 'chain';
+    mode: 'single' | 'chain' | 'all';
     sourceBoneName: string;
     items: BonePoseClipboardItem[];
 };
@@ -1046,6 +1048,21 @@ function copySelectedBoneChainPose(): void {
     showToast(`已复制 ${items.length} 根骨骼姿态`, 'success');
 }
 
+function copyAllBonesPose(): void {
+    const items = viewer.getAllBonesLocalTrs();
+    if (items.length === 0) {
+        showToast('当前模型没有骨骼', 'info');
+        return;
+    }
+    bonePoseClipboard = {
+        mode: 'all',
+        sourceBoneName: items[0]?.boneName ?? '',
+        items,
+    };
+    syncAnimationEditor();
+    showToast(`已复制全身 ${items.length} 根骨骼姿态`, 'success');
+}
+
 function pasteBonePose(opts: { mirror: boolean }): void {
     if (!bonePoseClipboard) {
         showToast('剪贴板里没有骨骼姿态', 'info');
@@ -1105,7 +1122,8 @@ function pasteBoneChainPose(opts: { mirror: boolean }): void {
     }).filter((item): item is BonePoseClipboardItem => Boolean(item));
 
     let count = 0;
-    runAnimationEdit(opts.mirror ? '镜像粘贴骨骼子链姿态' : '粘贴骨骼子链姿态', () => {
+    const scopeLabel = bonePoseClipboard.mode === 'all' ? '全身' : '骨骼子链';
+    runAnimationEdit(opts.mirror ? `镜像粘贴${scopeLabel}姿态` : `粘贴${scopeLabel}姿态`, () => {
         count = viewer.applyLocalTrsToBones(targets);
     });
     showToast(count > 0 ? `已粘贴 ${count} 根骨骼姿态` : '没有匹配的骨骼可粘贴', count > 0 ? 'success' : 'info');
@@ -1857,6 +1875,8 @@ function setupAnimationControls(): void {
     btnPasteBonePose.addEventListener('click', () => pasteBonePose({ mirror: false }));
     btnCopyBoneChainPose.addEventListener('click', copySelectedBoneChainPose);
     btnPasteBoneChainPose.addEventListener('click', () => pasteBoneChainPose({ mirror: false }));
+    btnCopyAllBonesPose.addEventListener('click', copyAllBonesPose);
+    btnPasteAllBonesPose.addEventListener('click', () => pasteBoneChainPose({ mirror: false }));
 
     btnMirrorBonePose.addEventListener('click', () => {
         mirrorSelectedBonePose();
@@ -2149,6 +2169,8 @@ function syncAnimationClipTools(state: AnimationPlaybackState): void {
     btnMirrorBonePose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
     btnMirrorBoneChainPose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
     btnMirrorAnimation.disabled = !hasSkeleton || !state.hasAnimations || state.activeIndex < 0;
+    btnCopyAllBonesPose.disabled = !hasSkeleton;
+    btnPasteAllBonesPose.disabled = !hasSkeleton || !bonePoseClipboard;
 }
 
 async function toggleAnimationWithLazyLoad(): Promise<void> {
@@ -2691,6 +2713,8 @@ function renderSkeletonControls(
     btnPasteBonePose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !bonePoseClipboard;
     btnCopyBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnPasteBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !bonePoseClipboard;
+    btnCopyAllBonesPose.disabled = !state.hasSkeleton;
+    btnPasteAllBonesPose.disabled = !state.hasSkeleton || !bonePoseClipboard;
     btnMirrorBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnResetAllBonesPose.disabled = !state.hasSkeleton;
     animSelectedBone.textContent = state.selectedBoneName || '—';

@@ -1939,6 +1939,20 @@ export class Viewer {
             }));
     }
 
+    getAllBonesLocalTrs(): Array<{
+        boneName: string;
+        position: [number, number, number];
+        quaternion: [number, number, number, number];
+        scale: [number, number, number];
+    }> {
+        return this.bones.map((bone) => ({
+            boneName: bone.name,
+            position: [bone.position.x, bone.position.y, bone.position.z],
+            quaternion: [bone.quaternion.x, bone.quaternion.y, bone.quaternion.z, bone.quaternion.w],
+            scale: [bone.scale.x, bone.scale.y, bone.scale.z],
+        }));
+    }
+
     applyLocalTrsToBone(
         target: { boneIndex?: number; boneName?: string },
         trs: {
