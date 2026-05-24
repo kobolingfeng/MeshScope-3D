@@ -493,10 +493,12 @@ const uvWheelUndoDraft: {
 const animationPoseUndoDraft: {
     snapshot: BonePoseSnapshot | null;
     animationSnapshot: AnimationClipSnapshot | null;
+    animationLibrarySnapshot: AnimationLibrarySnapshot | null;
     label: string;
 } = {
     snapshot: null,
     animationSnapshot: null,
+    animationLibrarySnapshot: null,
     label: '',
 };
 
@@ -4366,6 +4368,7 @@ function resetUndoDrafts(): void {
     uvWheelUndoDraft.label = '';
     animationPoseUndoDraft.snapshot = null;
     animationPoseUndoDraft.animationSnapshot = null;
+    animationPoseUndoDraft.animationLibrarySnapshot = null;
     animationPoseUndoDraft.label = '';
     refreshButtons();
 }
@@ -4489,6 +4492,7 @@ function runTextureEdit(label: string, apply: () => void): void {
 }
 
 function runAnimationEdit(label: string, apply: () => void): void {
+    const librarySnapshot = viewer.captureAnimationLibrarySnapshot();
     const snapshot = viewer.captureAnimationSnapshot();
     apply();
     const current = viewer.captureAnimationSnapshot();
@@ -4498,8 +4502,17 @@ function runAnimationEdit(label: string, apply: () => void): void {
             label,
             snapshot,
         });
-    } else if (!snapshot && current) {
-        markActiveDocumentDirty();
+    } else {
+        const currentLibrary = viewer.captureAnimationLibrarySnapshot();
+        if (!areAnimationLibrarySnapshotsEqual(librarySnapshot, currentLibrary)) {
+            pushUndoEntry({
+                kind: 'animation-library',
+                label,
+                snapshot: librarySnapshot,
+            });
+        } else if (!snapshot && current) {
+            markActiveDocumentDirty();
+        }
     }
     refreshAnimationBar(viewer.getAnimationState());
     syncAnimationEditor();
@@ -4526,6 +4539,7 @@ function beginBonePoseUndoTransaction(): void {
     if (!snapshot) return;
     animationPoseUndoDraft.snapshot = snapshot;
     animationPoseUndoDraft.animationSnapshot = viewer.captureAnimationSnapshot();
+    animationPoseUndoDraft.animationLibrarySnapshot = viewer.captureAnimationLibrarySnapshot();
     animationPoseUndoDraft.label = getBonePoseEditLabel();
     refreshButtons();
 }
@@ -4534,6 +4548,7 @@ function commitBonePoseUndoTransaction(): void {
     if (!animationPoseUndoDraft.snapshot) return;
     const label = animationPoseUndoDraft.label || '骨骼姿态';
     const animationSnapshot = animationPoseUndoDraft.animationSnapshot;
+    const animationLibrarySnapshot = animationPoseUndoDraft.animationLibrarySnapshot;
     const currentAnimation = viewer.captureAnimationSnapshot();
     let committedAnimationUndo = false;
     if (animationSnapshot && currentAnimation && !areAnimationSnapshotsEqual(animationSnapshot, currentAnimation)) {
@@ -4541,6 +4556,16 @@ function commitBonePoseUndoTransaction(): void {
             kind: 'animation',
             label,
             snapshot: animationSnapshot,
+        });
+        committedAnimationUndo = true;
+    } else if (
+        animationLibrarySnapshot
+        && !areAnimationLibrarySnapshotsEqual(animationLibrarySnapshot, viewer.captureAnimationLibrarySnapshot())
+    ) {
+        pushUndoEntry({
+            kind: 'animation-library',
+            label,
+            snapshot: animationLibrarySnapshot,
         });
         committedAnimationUndo = true;
     } else if (!animationSnapshot && currentAnimation) {
@@ -4551,6 +4576,7 @@ function commitBonePoseUndoTransaction(): void {
     }
     animationPoseUndoDraft.snapshot = null;
     animationPoseUndoDraft.animationSnapshot = null;
+    animationPoseUndoDraft.animationLibrarySnapshot = null;
     animationPoseUndoDraft.label = '';
     refreshButtons();
 }
