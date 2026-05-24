@@ -506,16 +506,16 @@
                             </div>
                             <div class="animation-toolbar">
                                 <div class="segmented-control" role="group" aria-label="骨骼变换模式">
-                                    <button id="anim-mode-rotate" class="segment-btn active" type="button" aria-pressed="true" disabled>旋转</button>
-                                    <button id="anim-mode-translate" class="segment-btn" type="button" aria-pressed="false" disabled>移动</button>
+                                    <button id="anim-mode-rotate" class="segment-btn active" type="button" aria-pressed="true" title="旋转骨骼 (E)" disabled>旋转</button>
+                                    <button id="anim-mode-translate" class="segment-btn" type="button" aria-pressed="false" title="移动骨骼 (W)" disabled>移动</button>
                                 </div>
                                 <div class="segmented-control" role="group" aria-label="骨骼坐标空间">
-                                    <button id="anim-space-local" class="segment-btn active" type="button" aria-pressed="true" disabled>本地</button>
-                                    <button id="anim-space-world" class="segment-btn" type="button" aria-pressed="false" disabled>全局</button>
+                                    <button id="anim-space-local" class="segment-btn active" type="button" aria-pressed="true" title="本地坐标，按 G 切换" disabled>本地</button>
+                                    <button id="anim-space-world" class="segment-btn" type="button" aria-pressed="false" title="全局坐标，按 G 切换" disabled>全局</button>
                                 </div>
                                 <div class="segmented-control" role="group" aria-label="骨骼控制模式">
                                     <button id="anim-fk-mode" class="segment-btn active" type="button" aria-pressed="true" title="FK: 旋转父骨骼会带动所有子级骨骼" disabled>FK</button>
-                                    <button id="anim-ik-mode" class="segment-btn" type="button" aria-pressed="false" title="IK: 移动目标点反解上级骨骼链" disabled>IK</button>
+                                    <button id="anim-ik-mode" class="segment-btn" type="button" aria-pressed="false" title="IK: 移动目标点反解上级骨骼链 (Q)" disabled>IK</button>
                                 </div>
                                 <label class="uv-inline-toggle" title="移动或旋转骨骼时自动覆盖/插入当前帧关键帧">
                                     <input id="anim-auto-keyframe" type="checkbox" checked disabled>
