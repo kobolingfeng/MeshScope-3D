@@ -600,6 +600,36 @@ export class Viewer {
         this.updateGridScale(maxDim);
     }
 
+    frameSelectedBone(): boolean {
+        const bone = this.selectedBone;
+        if (!bone) return false;
+
+        this.refreshActiveRootMatrices();
+        const center = bone.getWorldPosition(new Vector3());
+        const childPoints = getBoneChildren(bone).map((child) => child.getWorldPosition(new Vector3()));
+        if (childPoints.length === 0 && bone.parent) {
+            childPoints.push(bone.parent.getWorldPosition(new Vector3()));
+        }
+
+        let localSpan = 0;
+        for (const point of childPoints) localSpan = Math.max(localSpan, center.distanceTo(point));
+        const bounds = this.getModelBounds();
+        const modelMaxDim = bounds ? Math.max(bounds.size.x, bounds.size.y, bounds.size.z) : 1;
+        const focusSize = Math.max(localSpan * 2.5, modelMaxDim * 0.08, 0.05);
+        const fov = (this.camera.fov * Math.PI) / 180;
+        const dist = (focusSize / (2 * Math.tan(fov / 2))) * 2.2;
+
+        const direction = this.camera.position.clone().sub(this.controls.target);
+        if (direction.lengthSq() < 0.000001) direction.set(1, 0.7, 1);
+        this.camera.position.copy(center).addScaledVector(direction.normalize(), dist);
+        this.camera.near = Math.max(dist / 1000, 0.001);
+        this.camera.far = Math.max(dist * 100, modelMaxDim * 20);
+        this.camera.updateProjectionMatrix();
+        this.controls.target.copy(center);
+        this.controls.update();
+        return true;
+    }
+
     resetView(): void {
         if (this.modelGroup.children.length > 0) {
             const box = new Box3();

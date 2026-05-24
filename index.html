@@ -194,7 +194,7 @@
                         <button class="view-preset" type="button" data-preset="top" title="顶视图 (7)">顶</button>
                         <button class="view-preset" type="button" data-preset="bottom" title="底视图 (Ctrl+7)">底</button>
                         <button class="view-preset" type="button" data-preset="iso" title="等距视图 (0)">轴</button>
-                        <button class="view-preset view-preset-frame" type="button" data-preset="frame" title="聚焦模型 (F)">
+                        <button class="view-preset view-preset-frame" type="button" data-preset="frame" title="聚焦选中骨骼 / 模型 (F)">
                             <svg viewBox="0 0 24 24" aria-hidden="true">
                                 <path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/>
                             </svg>
@@ -489,6 +489,9 @@
                             <div class="property-grid">
                                 <span class="property-label">当前</span>
                                 <strong class="property-value" id="anim-selected-bone">—</strong>
+                            </div>
+                            <div class="animation-keyframe-actions">
+                                <button id="btn-frame-selected-bone" class="mini-btn" type="button" title="聚焦选中骨骼 (F)" disabled>聚焦骨骼</button>
                             </div>
                             <div class="animation-toolbar">
                                 <div class="segmented-control" role="group" aria-label="骨骼变换模式">

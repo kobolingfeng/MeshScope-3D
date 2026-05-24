@@ -286,6 +286,7 @@ const animShowTransformInput = $<HTMLInputElement>('anim-show-transform');
 const animBoneSearch = $<HTMLInputElement>('anim-bone-search');
 const animBoneList = $('anim-bone-list');
 const animSelectedBone = $('anim-selected-bone');
+const btnFrameSelectedBone = $<HTMLButtonElement>('btn-frame-selected-bone');
 const animModeTranslate = $<HTMLButtonElement>('anim-mode-translate');
 const animModeRotate = $<HTMLButtonElement>('anim-mode-rotate');
 const animSpaceLocal = $<HTMLButtonElement>('anim-space-local');
@@ -979,7 +980,7 @@ function setupViewPresets(): void {
 
 function applyViewPreset(preset: string): void {
     if (preset === 'frame') {
-        viewer.resetView();
+        frameCurrentSelectionOrModel();
     } else if (
         preset === 'front' || preset === 'back' || preset === 'left' ||
         preset === 'right' || preset === 'top' || preset === 'bottom' || preset === 'iso'
@@ -989,6 +990,10 @@ function applyViewPreset(preset: string): void {
         return;
     }
     syncPropertyPanelCamera();
+}
+
+function frameCurrentSelectionOrModel(): void {
+    if (!viewer.frameSelectedBone()) viewer.resetView();
 }
 
 // ----- Bone pose clipboard ---------------------------------------------------
@@ -1419,7 +1424,7 @@ function setupKeyboardShortcuts(): void {
             return;
         }
 
-        // F — frame model.
+        // F — frame selected bone, or the whole model if no bone is selected.
         if (lowerKey === 'f') {
             event.preventDefault();
             applyViewPreset('frame');
@@ -1753,6 +1758,14 @@ function setupAnimationControls(): void {
             count = viewer.insertAllBonesKeyframe();
         });
         showToast(count > 0 ? `已给 ${count} 根骨骼插入全身关键帧` : '没有可插入的骨骼关键帧', count > 0 ? 'success' : 'info');
+    });
+
+    btnFrameSelectedBone.addEventListener('click', () => {
+        if (viewer.frameSelectedBone()) {
+            syncPropertyPanelCamera();
+        } else {
+            showToast('未选中骨骼', 'info');
+        }
     });
 
     btnDeleteKeyframe.addEventListener('click', () => {
@@ -2480,6 +2493,7 @@ function renderSkeletonControls(
     btnPasteBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !bonePoseClipboard;
     btnMirrorBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animSelectedBone.textContent = state.selectedBoneName || '—';
+    btnFrameSelectedBone.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     syncBoneSolverModeButtons(state.ikEnabled);
     syncTransformModeButtons(state.transformMode);
     syncTransformSpaceButtons(state.transformSpace);
