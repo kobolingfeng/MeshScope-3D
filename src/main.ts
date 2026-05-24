@@ -322,6 +322,7 @@ const btnTimelineSelectAll = $<HTMLButtonElement>('btn-timeline-select-all');
 const btnTimelineClearSelection = $<HTMLButtonElement>('btn-timeline-clear-selection');
 const btnTimelineCopyKeys = $<HTMLButtonElement>('btn-timeline-copy-keys');
 const btnTimelinePasteKeys = $<HTMLButtonElement>('btn-timeline-paste-keys');
+const btnTimelineSnapKeys = $<HTMLButtonElement>('btn-timeline-snap-keys');
 const animTimelineSnapInput = $<HTMLInputElement>('anim-timeline-snap');
 const animTimelineSelectedBoneOnlyInput = $<HTMLInputElement>('anim-timeline-selected-bone-only');
 const animTimelineFpsInput = $<HTMLInputElement>('anim-timeline-fps');
@@ -1851,6 +1852,10 @@ function setupAnimationControls(): void {
         pasteTimelineKeyframesAtPlayhead();
     });
 
+    btnTimelineSnapKeys.addEventListener('click', () => {
+        snapSelectedTimelineKeyframesToFrames();
+    });
+
     animTimelineSnapInput.addEventListener('change', () => {
         timelineSnapEnabled = animTimelineSnapInput.checked;
         syncViewerKeyframeSnap();
@@ -2354,6 +2359,34 @@ function pasteTimelineKeyframesAtPlayhead(): void {
     showToast(`已粘贴到 ${formatFrameTime(pasteTime)}`, 'success');
 }
 
+function snapSelectedTimelineKeyframesToFrames(): void {
+    if (selectedKeyframeTimes.length === 0) {
+        showToast('先在时间轴选择关键帧', 'info');
+        return;
+    }
+
+    const state = viewer.getAnimationState();
+    if (!state.hasAnimations || state.activeIndex < 0) {
+        showToast('需要先有一个动画片段', 'info');
+        return;
+    }
+
+    const fromTimes = [...selectedKeyframeTimes];
+    const toTimes = fromTimes.map((time) => snapTimelineTimeToFrame(time, state.duration));
+    if (fromTimes.every((time, index) => nearlyEqualTimeForUi(time, toTimes[index]))) {
+        showToast('选中关键帧已经在整帧上', 'info');
+        return;
+    }
+
+    runAnimationEdit('吸附关键帧到整帧', () => {
+        moveTimelineKeyframesAtTimes(fromTimes, toTimes);
+    });
+    setSelectedKeyframeTimes(toTimes);
+    if (selectedKeyframeTimes.length > 0) viewer.seekAnimation(selectedKeyframeTimes[0]);
+    renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+    showToast(`已吸附 ${selectedKeyframeTimes.length} 个关键帧`, 'success');
+}
+
 function duplicateClipAt(index: number): void {
     let newIndex = -1;
     runAnimationLibraryEdit('复制动画片段', () => {
@@ -2715,6 +2748,7 @@ function updateTimelineSelectionSummary(
     btnTimelineClearSelection.disabled = count === 0;
     btnTimelineCopyKeys.disabled = count === 0;
     btnTimelinePasteKeys.disabled = !keyframeClipboard || !hasAnimations;
+    btnTimelineSnapKeys.disabled = count === 0;
     animTimelineSelectedBoneOnlyInput.disabled = !hasAnimations;
     animTimelineSelectedBoneOnlyInput.checked = timelineSelectedBoneOnly;
     btnDeleteKeyframe.textContent = count > 0 ? `删除选中 ${count}` : '删除当前帧';
@@ -2983,6 +3017,11 @@ function getTimelineTimeAtClientX(
 function snapTimelineTime(time: number, duration: number): number {
     const clamped = clamp(time, 0, Math.max(0, duration));
     if (!timelineSnapEnabled) return clamped;
+    return snapTimelineTimeToFrame(clamped, duration);
+}
+
+function snapTimelineTimeToFrame(time: number, duration: number): number {
+    const clamped = clamp(time, 0, Math.max(0, duration));
     const frame = Math.round(clamped * timelineFps);
     return clamp(frame / timelineFps, 0, Math.max(0, duration));
 }
