@@ -431,6 +431,7 @@ export class Viewer {
     private ikIterations = 10;
     private ikTarget: Object3D | null = null;
     private ikTargetMesh: Mesh | null = null;
+    private ikTargetBone: Bone | null = null;
     private ikChain: Bone[] = [];
 
     private wireframe = false;
@@ -1463,6 +1464,7 @@ export class Viewer {
         this.ensureIkTarget();
         if (!this.ikTarget) return false;
         this.selectedBone.getWorldPosition(this.ikTarget.position);
+        this.ikTargetBone = this.selectedBone;
         if (this.ikTargetMesh) this.ikTargetMesh.position.copy(this.ikTarget.position);
         this.attachTransformTarget();
         this.updateSkeletonOverlay();
@@ -1979,6 +1981,7 @@ export class Viewer {
         if (snapshot.ikTargetPosition && this.ikEnabled) {
             this.ensureIkTarget();
             this.ikTarget?.position.fromArray(snapshot.ikTargetPosition);
+            this.ikTargetBone = this.selectedBone;
         }
         this.attachTransformTarget();
         this.updateSkeletonOverlay();
@@ -2847,6 +2850,7 @@ export class Viewer {
         if (this.ikTargetMesh) this.scene.remove(this.ikTargetMesh);
         this.ikTarget = null;
         this.ikTargetMesh = null;
+        this.ikTargetBone = null;
         this.ikChain = [];
         this.bones = [];
         this.boneRestPose.clear();
@@ -3132,6 +3136,7 @@ export class Viewer {
 
     private ensureIkTarget(): void {
         if (!this.selectedBone) return;
+        const shouldResetTarget = !this.ikTarget || this.ikTargetBone !== this.selectedBone;
         if (!this.ikTarget) {
             this.ikTarget = new Object3D();
             this.scene.add(this.ikTarget);
@@ -3142,7 +3147,10 @@ export class Viewer {
             this.ikTargetMesh.renderOrder = 25;
             this.scene.add(this.ikTargetMesh);
         }
-        this.selectedBone.getWorldPosition(this.ikTarget.position);
+        if (shouldResetTarget) {
+            this.selectedBone.getWorldPosition(this.ikTarget.position);
+            this.ikTargetBone = this.selectedBone;
+        }
         this.ikTargetMesh.position.copy(this.ikTarget.position);
         this.ikTargetMesh.visible = this.ikEnabled && this.transformControlsVisible;
     }
