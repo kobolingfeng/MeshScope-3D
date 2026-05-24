@@ -1403,6 +1403,18 @@ export class Viewer {
         this.onSkeletonChanged(this.getSkeletonEditorState());
     }
 
+    resetIkTargetToSelectedBone(): boolean {
+        if (!this.ikEnabled || !this.selectedBone) return false;
+        this.ensureIkTarget();
+        if (!this.ikTarget) return false;
+        this.selectedBone.getWorldPosition(this.ikTarget.position);
+        if (this.ikTargetMesh) this.ikTargetMesh.position.copy(this.ikTarget.position);
+        this.attachTransformTarget();
+        this.updateSkeletonOverlay();
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+        return true;
+    }
+
     setBoneStepSettings(settings: { rotationDegrees?: number; translationPercent?: number }): void {
         if (typeof settings.rotationDegrees === 'number' && Number.isFinite(settings.rotationDegrees)) {
             const degrees = Math.max(0.1, Math.min(45, settings.rotationDegrees));

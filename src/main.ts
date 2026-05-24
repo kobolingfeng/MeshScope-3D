@@ -298,6 +298,7 @@ const animAutoKeyframeInput = $<HTMLInputElement>('anim-auto-keyframe');
 const animAutoKeyframeScope = $<HTMLSelectElement>('anim-auto-keyframe-scope');
 const animIkChainLengthInput = $<HTMLInputElement>('anim-ik-chain-length');
 const animIkIterationsInput = $<HTMLInputElement>('anim-ik-iterations');
+const btnResetIkTarget = $<HTMLButtonElement>('btn-reset-ik-target');
 const animRotationStepInput = $<HTMLInputElement>('anim-rotation-step');
 const animTranslationStepInput = $<HTMLInputElement>('anim-translation-step');
 const animTimelineScroll = $('anim-timeline-scroll');
@@ -1825,6 +1826,11 @@ function setupAnimationControls(): void {
         syncAnimationEditor();
     });
 
+    btnResetIkTarget.addEventListener('click', () => {
+        const changed = viewer.resetIkTargetToSelectedBone();
+        showToast(changed ? 'IK 目标已回到当前骨骼' : '需要先启用 IK 并选中骨骼', changed ? 'success' : 'info');
+    });
+
     const applyBoneStepSettings = () => {
         const rotationDegrees = Number(animRotationStepInput.value);
         const translationPercent = Number(animTranslationStepInput.value);
@@ -2742,6 +2748,7 @@ function renderSkeletonControls(
     }
     animIkChainLengthInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !state.ikEnabled;
     animIkIterationsInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !state.ikEnabled;
+    btnResetIkTarget.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !state.ikEnabled;
     animRotationStepInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animTranslationStepInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     if (Number(animIkChainLengthInput.value) !== state.ikChainLength) {
