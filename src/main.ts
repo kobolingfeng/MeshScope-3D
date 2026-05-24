@@ -281,6 +281,7 @@ const animModeTranslate = $<HTMLButtonElement>('anim-mode-translate');
 const animModeRotate = $<HTMLButtonElement>('anim-mode-rotate');
 const animFkMode = $<HTMLButtonElement>('anim-fk-mode');
 const animIkMode = $<HTMLButtonElement>('anim-ik-mode');
+const animIkChainLengthInput = $<HTMLInputElement>('anim-ik-chain-length');
 const animKeyframeStrip = $('anim-keyframe-strip');
 const btnInsertKeyframe = $<HTMLButtonElement>('btn-insert-keyframe');
 const btnDeleteKeyframe = $<HTMLButtonElement>('btn-delete-keyframe');
@@ -1399,6 +1400,13 @@ function setupAnimationControls(): void {
         setBoneSolverMode(true);
     });
 
+    animIkChainLengthInput.addEventListener('change', () => {
+        const value = Number(animIkChainLengthInput.value);
+        const length = Number.isFinite(value) ? clamp(value, 1, 12) : 4;
+        viewer.setIkChainLength(length);
+        syncAnimationEditor();
+    });
+
     btnInsertKeyframe.addEventListener('click', () => {
         runAnimationEdit('插入关键帧', () => {
             viewer.insertSelectedBoneKeyframe();
@@ -2022,8 +2030,14 @@ function renderSkeletonControls(state: SkeletonEditorState): void {
     animShowTransformInput.checked = state.transformControlsVisible;
     animShowTransformInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animBoneSearch.disabled = !state.hasSkeleton;
+    animModeRotate.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    animModeTranslate.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animFkMode.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animIkMode.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    animIkChainLengthInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !state.ikEnabled;
+    if (Number(animIkChainLengthInput.value) !== state.ikChainLength) {
+        animIkChainLengthInput.value = String(state.ikChainLength);
+    }
     btnInsertKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnDeleteKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animSelectedBone.textContent = state.selectedBoneName || '—';

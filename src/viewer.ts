@@ -218,6 +218,7 @@ export type SkeletonEditorState = {
     selectedBoneName: string;
     transformMode: BoneTransformMode;
     ikEnabled: boolean;
+    ikChainLength: number;
     keyframes: AnimationTimelineMarker[];
 };
 
@@ -368,6 +369,7 @@ export class Viewer {
     private transformDragging = false;
     private transformChangedDuringDrag = false;
     private ikEnabled = false;
+    private ikChainMaxLength = 4;
     private ikTarget: Object3D | null = null;
     private ikTargetMesh: Mesh | null = null;
     private ikChain: Bone[] = [];
@@ -1232,6 +1234,7 @@ export class Viewer {
             selectedBoneName: selectedName,
             transformMode: this.boneTransformMode,
             ikEnabled: this.ikEnabled,
+            ikChainLength: this.ikChainMaxLength,
             keyframes: includeKeyframes ? this.getTimelineMarkers() : [],
         };
     }
@@ -1281,6 +1284,17 @@ export class Viewer {
         this.ikEnabled = enabled && Boolean(this.selectedBone);
         this.refreshIkChain();
         this.attachTransformTarget();
+        this.updateSkeletonOverlay();
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+    }
+
+    setIkChainLength(length: number): void {
+        const next = Math.max(1, Math.min(12, Math.round(length)));
+        if (next === this.ikChainMaxLength) return;
+        this.ikChainMaxLength = next;
+        this.refreshIkChain();
+        if (this.ikEnabled) this.solveIk();
+        this.updateSkeletonOverlay();
         this.onSkeletonChanged(this.getSkeletonEditorState());
     }
 
@@ -2471,7 +2485,7 @@ export class Viewer {
         this.ikChain = [];
         if (!this.selectedBone) return;
         let current: Object3D | null = this.selectedBone.parent;
-        while (current && this.ikChain.length < 4) {
+        while (current && this.ikChain.length < this.ikChainMaxLength) {
             if ((current as Bone).isBone) this.ikChain.push(current as Bone);
             current = current.parent;
         }
