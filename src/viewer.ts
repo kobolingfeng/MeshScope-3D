@@ -1349,7 +1349,7 @@ export class Viewer {
             this.ensureSkeletonOverlay();
         }
         if (this.skeletonHelper) this.skeletonHelper.visible = false;
-        for (const handle of this.boneHandles.values()) handle.visible = visible;
+        for (const handle of this.boneHandles.values()) handle.visible = false;
         for (const lines of this.boneLines.values()) {
             for (const line of lines) line.visible = visible;
         }
@@ -2827,7 +2827,7 @@ export class Viewer {
             const handle = new Mesh(this.boneHandleGeometry, this.boneHandleMaterial);
             handle.name = `__bone_handle__${bone.name}`;
             handle.renderOrder = 20;
-            handle.visible = this.skeletonVisible;
+            handle.visible = false;
             handle.userData.__boneHandle = true;
             this.boneHandles.set(bone, handle);
             this.handleToBone.set(handle, bone);
@@ -2903,11 +2903,7 @@ export class Viewer {
             bone.getWorldPosition(end);
             if (handle) {
                 handle.position.copy(end);
-                handle.scale.setScalar(bone === this.selectedBone ? scale * 2.25 : scale * 1.18);
-                handle.material = bone === this.selectedBone
-                    ? this.selectedBoneHandleMaterial
-                    : this.boneHandleMaterial;
-                handle.visible = this.skeletonVisible;
+                handle.visible = false;
             }
 
             const lines = this.boneLines.get(bone);
@@ -2995,10 +2991,7 @@ export class Viewer {
         this.pointerNdc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
         this.raycaster.setFromCamera(this.pointerNdc, this.camera);
         this.raycaster.params.Line.threshold = Math.max(this.getBoneHandleScale() * 1.8, 0.05);
-        const hits = this.raycaster.intersectObjects([
-            ...this.boneHandles.values(),
-            ...this.getBoneLineObjects(),
-        ], false);
+        const hits = this.raycaster.intersectObjects(this.getBoneLineObjects(), false);
         const hit = hits[0]?.object;
         if (!hit) return;
 
