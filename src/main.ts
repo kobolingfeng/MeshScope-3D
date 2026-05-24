@@ -2300,7 +2300,7 @@ function deleteClipAt(index: number): void {
     const state = viewer.getAnimationState();
     const clip = state.clips[index];
     if (!clip) return;
-    if (!window.confirm(`确定删除动画"${clip.name}"？此操作不可撤销。`)) return;
+    if (!window.confirm(`确定删除动画"${clip.name}"？删除后可从操作历史撤回。`)) return;
     let deleted = false;
     runAnimationLibraryEdit('删除动画片段', () => {
         deleted = viewer.deleteAnimationClip(index);
