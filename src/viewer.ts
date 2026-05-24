@@ -1466,6 +1466,14 @@ export class Viewer {
     }
 
     captureKeyframesAtTimes(times: number[]): AnimationClipSnapshot | null {
+        return this.captureKeyframesAtTimesInternal(times, null);
+    }
+
+    captureSelectedBoneKeyframesAtTimes(times: number[]): AnimationClipSnapshot | null {
+        return this.captureKeyframesAtTimesInternal(times, this.selectedBone);
+    }
+
+    private captureKeyframesAtTimesInternal(times: number[], bone: Bone | null): AnimationClipSnapshot | null {
         const clip = this.animClips[this.activeClipIndex];
         const selectedTimes = normalizeKeyframeTimes(times);
         if (!clip || selectedTimes.length === 0) return null;
@@ -1473,6 +1481,11 @@ export class Viewer {
         const sourceStart = selectedTimes[0];
         const tracks: AnimationClipSnapshot['tracks'] = [];
         for (const track of clip.tracks) {
+            if (bone) {
+                const property = parseAnimationTrackName(track.name).property;
+                if (property !== 'position' && property !== 'quaternion' && property !== 'scale') continue;
+                if (!trackTargetsBoneProperty(track, bone, property)) continue;
+            }
             const valueSize = track.getValueSize();
             if (valueSize <= 0) continue;
             const trackTimes = Array.from(track.times as ArrayLike<number>);

@@ -306,6 +306,7 @@ const btnTimelineClearSelection = $<HTMLButtonElement>('btn-timeline-clear-selec
 const btnTimelineCopyKeys = $<HTMLButtonElement>('btn-timeline-copy-keys');
 const btnTimelinePasteKeys = $<HTMLButtonElement>('btn-timeline-paste-keys');
 const animTimelineSnapInput = $<HTMLInputElement>('anim-timeline-snap');
+const animTimelineSelectedBoneOnlyInput = $<HTMLInputElement>('anim-timeline-selected-bone-only');
 const animTimelineFpsInput = $<HTMLInputElement>('anim-timeline-fps');
 const animTimelineZoomInput = $<HTMLInputElement>('anim-timeline-zoom');
 const animTimelineZoomLabel = $('anim-timeline-zoom-label');
@@ -367,6 +368,7 @@ let animationClipListRenderKey = '';
 let lastScrolledBoneIndex = -1;
 let timelineZoom = 1;
 let timelineSnapEnabled = true;
+let timelineSelectedBoneOnly = false;
 let timelineFps = 30;
 let timelineRetimePreviewDelta = 0;
 let statsRefreshRaf = 0;
@@ -1258,7 +1260,7 @@ function selectAdjacentTimelineKeyframe(direction: 1 | -1): boolean {
     const state = viewer.getAnimationState();
     if (!state.hasAnimations || state.duration <= 0) return false;
 
-    const markers = [...new Set(viewer.getSkeletonEditorState().keyframes.map((marker) => Number(marker.time.toFixed(4))))]
+    const markers = [...new Set(getTimelineVisibleMarkers(viewer.getSkeletonEditorState()).map((marker) => Number(marker.time.toFixed(4))))]
         .sort((a, b) => a - b);
     if (markers.length === 0) return false;
 
@@ -1287,7 +1289,7 @@ function nudgeSelectedTimelineKeyframes(direction: 1 | -1): boolean {
     if (fromTimes.every((time, index) => nearlyEqualTimeForUi(time, toTimes[index] ?? time))) return false;
 
     runAnimationEdit(direction > 0 ? '右移关键帧' : '左移关键帧', () => {
-        viewer.moveKeyframesAtTimes(fromTimes, toTimes);
+        moveTimelineKeyframesAtTimes(fromTimes, toTimes);
     });
     setSelectedKeyframeTimes(toTimes);
     viewer.seekAnimation(direction > 0 ? Math.max(...toTimes) : Math.min(...toTimes));
@@ -1525,7 +1527,7 @@ function setupAnimationControls(): void {
         if (selectedKeyframeTimes.length > 0) {
             const count = selectedKeyframeTimes.length;
             runAnimationEdit('删除选中关键帧', () => {
-                viewer.deleteKeyframesAtTimes(selectedKeyframeTimes);
+                deleteTimelineKeyframesAtTimes(selectedKeyframeTimes);
             });
             selectedKeyframeTimes = [];
             showToast(`已删除 ${count} 个选中关键帧`, 'success');
@@ -1570,9 +1572,8 @@ function setupAnimationControls(): void {
     });
 
     btnTimelineSelectAll.addEventListener('click', () => {
-        const markers = viewer.getSkeletonEditorState().keyframes;
-        const scoped = markers.filter((marker) => marker.selectedBone);
-        setSelectedKeyframeTimes((scoped.length > 0 ? scoped : markers).map((marker) => marker.time));
+        const markers = getTimelineVisibleMarkers(viewer.getSkeletonEditorState());
+        setSelectedKeyframeTimes(markers.map((marker) => marker.time));
         renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
     });
 
@@ -1591,6 +1592,13 @@ function setupAnimationControls(): void {
 
     animTimelineSnapInput.addEventListener('change', () => {
         timelineSnapEnabled = animTimelineSnapInput.checked;
+        renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+    });
+
+    animTimelineSelectedBoneOnlyInput.addEventListener('change', () => {
+        timelineSelectedBoneOnly = animTimelineSelectedBoneOnlyInput.checked;
+        selectedKeyframeTimes = [];
+        timelineStripRenderKey = '';
         renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
     });
 
@@ -2013,7 +2021,9 @@ function copySelectedTimelineKeyframes(): void {
         return;
     }
 
-    const snapshot = viewer.captureKeyframesAtTimes(selectedKeyframeTimes);
+    const snapshot = timelineSelectedBoneOnly
+        ? viewer.captureSelectedBoneKeyframesAtTimes(selectedKeyframeTimes)
+        : viewer.captureKeyframesAtTimes(selectedKeyframeTimes);
     if (!snapshot) {
         showToast('没有可复制的关键帧', 'info');
         return;
@@ -2291,7 +2301,7 @@ function getTimelineStripRenderKey(
     skeletonState: SkeletonEditorState,
     playbackState: AnimationPlaybackState,
 ): string {
-    const keyframes = skeletonState.keyframes
+    const keyframes = getTimelineVisibleMarkers(skeletonState)
         .map((marker) => `${marker.time.toFixed(4)}${marker.selectedBone ? 'b' : ''}`)
         .join(',');
     const selection = selectedKeyframeTimes
@@ -2302,6 +2312,7 @@ function getTimelineStripRenderKey(
         timelineZoom.toFixed(3),
         timelineFps,
         timelineSnapEnabled ? 1 : 0,
+        timelineSelectedBoneOnly ? 1 : 0,
         timelineRetimePreviewDelta.toFixed(4),
         selection,
         keyframes,
@@ -2323,7 +2334,8 @@ function renderAnimationTimelineNow(
         updateTimelineSelectionSummary();
         return;
     }
-    const markerTimes = skeletonState.keyframes.map((marker) => marker.time);
+    const visibleMarkers = getTimelineVisibleMarkers(skeletonState);
+    const markerTimes = visibleMarkers.map((marker) => marker.time);
     selectedKeyframeTimes = selectedKeyframeTimes.filter((time) => markerTimes.some((markerTime) => nearlyEqualTimeForUi(time, markerTime)));
     updateTimelineSelectionSummary();
 
@@ -2336,7 +2348,7 @@ function renderAnimationTimelineNow(
         `;
     }).join('');
 
-    const markers = skeletonState.keyframes.map((marker) => {
+    const markers = visibleMarkers.map((marker) => {
             const selected = isKeyframeTimeSelected(marker.time);
             const displayTime = selected
                 ? clamp(marker.time + timelineRetimePreviewDelta, 0, duration)
@@ -2390,6 +2402,8 @@ function updateTimelineSelectionSummary(
     btnTimelineClearSelection.disabled = count === 0;
     btnTimelineCopyKeys.disabled = count === 0;
     btnTimelinePasteKeys.disabled = !keyframeClipboard || !hasAnimations;
+    animTimelineSelectedBoneOnlyInput.disabled = !hasAnimations;
+    animTimelineSelectedBoneOnlyInput.checked = timelineSelectedBoneOnly;
     btnDeleteKeyframe.textContent = count > 0 ? `删除选中 ${count}` : '删除当前帧';
     animTimelineZoomLabel.textContent = `${Math.round(timelineZoom * 100)}%`;
     if (options.updateStatus ?? true) updateStatusChips(state);
@@ -2398,6 +2412,22 @@ function updateTimelineSelectionSummary(
 function getTimelineContentWidth(duration: number): number {
     if (duration <= 0) return 1600;
     return Math.max(1600, Math.ceil(duration * 220 * timelineZoom));
+}
+
+function getTimelineVisibleMarkers(skeletonState: SkeletonEditorState): SkeletonEditorState['keyframes'] {
+    return timelineSelectedBoneOnly
+        ? skeletonState.keyframes.filter((marker) => marker.selectedBone)
+        : skeletonState.keyframes;
+}
+
+function moveTimelineKeyframesAtTimes(fromTimes: number[], toTimes: number[]): void {
+    if (timelineSelectedBoneOnly) viewer.moveSelectedBoneKeyframesAtTimes(fromTimes, toTimes);
+    else viewer.moveKeyframesAtTimes(fromTimes, toTimes);
+}
+
+function deleteTimelineKeyframesAtTimes(times: number[]): void {
+    if (timelineSelectedBoneOnly) viewer.deleteSelectedBoneKeyframesAtTimes(times);
+    else viewer.deleteKeyframesAtTimes(times);
 }
 
 function handleTimelineWheel(event: WheelEvent): void {
@@ -2565,7 +2595,7 @@ function handleTimelinePointerUp(event: PointerEvent): void {
             const delta = rawEnd - rawStart;
             const targetTimes = startTimes.map((time) => snapTimelineTime(time + delta, duration));
             runAnimationEdit('移动关键帧', () => {
-                viewer.moveKeyframesAtTimes(startTimes, targetTimes);
+                moveTimelineKeyframesAtTimes(startTimes, targetTimes);
             });
             setSelectedKeyframeTimes(targetTimes);
             if (selectedKeyframeTimes.length > 0) viewer.seekAnimation(selectedKeyframeTimes[0]);
@@ -2645,7 +2675,7 @@ function snapTimelineTime(time: number, duration: number): number {
 }
 
 function selectKeyframeTimeRange(start: number, end: number): void {
-    const markers = viewer.getSkeletonEditorState().keyframes
+    const markers = getTimelineVisibleMarkers(viewer.getSkeletonEditorState())
         .map((marker) => marker.time)
         .filter((time) => time >= start - 1e-4 && time <= end + 1e-4);
     setSelectedKeyframeTimes(markers);
