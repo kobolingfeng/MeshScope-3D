@@ -1156,6 +1156,16 @@ function setupKeyboardShortcuts(): void {
             pasteTimelineKeyframesAtPlayhead();
             return;
         }
+        if (ctrlOnly && !event.shiftKey && lowerKey === 'a' && !animEditor.hidden) {
+            const state = viewer.getAnimationState();
+            if (state.hasAnimations && state.activeIndex >= 0) {
+                event.preventDefault();
+                const markers = getTimelineVisibleMarkers(viewer.getSkeletonEditorState());
+                setSelectedKeyframeTimes(markers.map((marker) => marker.time));
+                renderAnimationTimeline(viewer.getSkeletonEditorState(), state);
+                return;
+            }
+        }
 
         // Ctrl+C / Ctrl+Shift+C / Ctrl+V / Ctrl+Shift+V — bone pose clipboard.
         // Only when the skeleton overlay is visible (clear "rigging mode" signal),
@@ -1267,6 +1277,13 @@ function setupKeyboardShortcuts(): void {
         if (!noMods) return;
 
         const state = viewer.getAnimationState();
+
+        if (key === 'Escape' && selectedKeyframeTimes.length > 0) {
+            event.preventDefault();
+            selectedKeyframeTimes = [];
+            renderAnimationTimeline(viewer.getSkeletonEditorState(), state);
+            return;
+        }
 
         if (key === 'Delete' || key === 'Backspace') {
             if (selectedKeyframeTimes.length > 0) {
