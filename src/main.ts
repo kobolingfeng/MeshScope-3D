@@ -1555,6 +1555,8 @@ function setupUndoShortcuts(): void {
 }
 
 function setupAnimationControls(): void {
+    syncViewerKeyframeSnap();
+
     animPlayBtn.addEventListener('click', () => {
         void toggleAnimationWithLazyLoad();
     });
@@ -1805,6 +1807,7 @@ function setupAnimationControls(): void {
 
     animTimelineSnapInput.addEventListener('change', () => {
         timelineSnapEnabled = animTimelineSnapInput.checked;
+        syncViewerKeyframeSnap();
         renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
     });
 
@@ -1819,6 +1822,7 @@ function setupAnimationControls(): void {
         const value = Number(animTimelineFpsInput.value);
         timelineFps = Number.isFinite(value) ? Math.round(clamp(value, 1, 240)) : 30;
         animTimelineFpsInput.value = String(timelineFps);
+        syncViewerKeyframeSnap();
         syncAnimationProgress(viewer.getAnimationState());
         renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
     });
@@ -2922,6 +2926,10 @@ function setSelectedKeyframeTimes(times: number[]): void {
     const values = [...new Set(times.map((time) => Number(time.toFixed(4))))];
     selectedKeyframeTimes = values.sort((a, b) => a - b);
     updateStatusChips();
+}
+
+function syncViewerKeyframeSnap(): void {
+    viewer.setKeyframeSnapStep(timelineSnapEnabled ? 1 / timelineFps : null);
 }
 
 function toggleSelectedKeyframeTime(time: number): void {

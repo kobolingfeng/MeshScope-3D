@@ -382,6 +382,7 @@ export class Viewer {
     private boneRotationStepRadians = DEFAULT_BONE_ROTATION_STEP_RADIANS;
     private boneTranslationStepRatio = DEFAULT_BONE_TRANSLATION_STEP_RATIO;
     private autoKeyframeEnabled = true;
+    private keyframeSnapStep: number | null = 1 / 30;
     private transformDragging = false;
     private transformChangedDuringDrag = false;
     private ikEnabled = false;
@@ -1371,6 +1372,12 @@ export class Viewer {
         this.onSkeletonChanged(this.getSkeletonEditorState());
     }
 
+    setKeyframeSnapStep(step: number | null): void {
+        this.keyframeSnapStep = typeof step === 'number' && Number.isFinite(step) && step > 0
+            ? step
+            : null;
+    }
+
     insertSelectedBoneKeyframe(): void {
         const clip = this.ensureActiveAnimationClip();
         if (!clip || !this.selectedBone) return;
@@ -1400,7 +1407,7 @@ export class Viewer {
 
     private autoKeyframeBonePoseTargets(clip: AnimationClip, targets: Bone[]): boolean {
         if (targets.length === 0) return false;
-        const time = this.activeAction?.time ?? 0;
+        const time = this.getCurrentKeyframeTime();
         for (const bone of targets) {
             upsertBoneKeyframe(clip, bone, 'position', time);
             upsertBoneKeyframe(clip, bone, 'quaternion', time);
@@ -1412,6 +1419,13 @@ export class Viewer {
         this.refreshActiveAnimationAfterEdit(this.activeClipIndex);
         this.onSkeletonChanged(this.getSkeletonEditorState());
         return true;
+    }
+
+    private getCurrentKeyframeTime(): number {
+        const raw = this.activeAction?.time ?? 0;
+        const step = this.keyframeSnapStep;
+        if (!step) return Math.max(0, raw);
+        return Math.max(0, Number((Math.round(raw / step) * step).toFixed(6)));
     }
 
     deleteSelectedBoneKeyframe(): void {
