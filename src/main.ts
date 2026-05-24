@@ -2262,6 +2262,11 @@ function setupAnimationControls(): void {
     bindNumericPair(animTimeScaleRange, animTimeScaleInput, () => undefined);
 
     btnApplyAnimTimeScale.addEventListener('click', () => {
+        const state = viewer.getAnimationState();
+        if (!state.hasAnimations || state.activeIndex < 0) {
+            showToast('需要先选择一个动画', 'info');
+            return;
+        }
         const factor = Number(animTimeScaleInput.value);
         if (!Number.isFinite(factor) || factor <= 0) return;
         if (nearlyEqual(factor, 1)) {
@@ -3317,12 +3322,15 @@ function updateTimelineSelectionSummary(
         : `0 关键帧 · F${frame}`;
     const hasAnimations = state.hasAnimations && state.activeIndex >= 0;
     btnTimelineSelectAll.disabled = !hasAnimations;
-    btnTimelineClearSelection.disabled = count === 0;
-    btnTimelineCopyKeys.disabled = count === 0;
+    btnTimelineClearSelection.disabled = !hasAnimations || count === 0;
+    btnTimelineCopyKeys.disabled = !hasAnimations || count === 0;
     btnTimelinePasteKeys.disabled = !keyframeClipboard || !hasAnimations;
-    btnTimelineSnapKeys.disabled = count === 0;
-    btnTimelineReverseKeys.disabled = count < 2;
-    btnApplySelectedTimeScale.disabled = count < 2;
+    btnTimelineSnapKeys.disabled = !hasAnimations || count === 0;
+    btnTimelineReverseKeys.disabled = !hasAnimations || count < 2;
+    animTimeScaleRange.disabled = !hasAnimations;
+    animTimeScaleInput.disabled = !hasAnimations;
+    btnApplyAnimTimeScale.disabled = !hasAnimations;
+    btnApplySelectedTimeScale.disabled = !hasAnimations || count < 2;
     animTimelineSelectedBoneOnlyInput.disabled = !hasAnimations;
     animTimelineSelectedBoneOnlyInput.checked = timelineSelectedBoneOnly;
     btnDeleteKeyframe.textContent = count > 0 ? `删除选中 ${count}` : '删除当前帧';
