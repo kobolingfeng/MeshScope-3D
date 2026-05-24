@@ -261,6 +261,7 @@ const animPlayBtn = $<HTMLButtonElement>('anim-play');
 const animStopBtn = $<HTMLButtonElement>('anim-stop');
 const animClipSearch = $<HTMLInputElement>('anim-clip-search');
 const btnNewTposeClip = $<HTMLButtonElement>('btn-new-tpose-clip');
+const btnNewCurrentPoseClip = $<HTMLButtonElement>('btn-new-current-pose-clip');
 const btnCopyClipKeys = $<HTMLButtonElement>('btn-copy-clip-keys');
 const btnPasteClipKeys = $<HTMLButtonElement>('btn-paste-clip-keys');
 const animClipList = $('anim-clip-list');
@@ -1378,6 +1379,10 @@ function setupAnimationControls(): void {
         createRestPoseClip();
     });
 
+    btnNewCurrentPoseClip.addEventListener('click', () => {
+        createCurrentPoseClip();
+    });
+
     btnCopyClipKeys.addEventListener('click', () => {
         copyClipKeyframesAt(viewer.getAnimationState().activeIndex);
     });
@@ -1740,6 +1745,7 @@ function syncAnimationClipTools(state: AnimationPlaybackState): void {
     const skeleton = viewer.getSkeletonEditorState({ includeKeyframes: false });
     const hasSkeleton = skeleton.hasSkeleton;
     btnNewTposeClip.disabled = !hasSkeleton;
+    btnNewCurrentPoseClip.disabled = !hasSkeleton;
     btnCopyClipKeys.disabled = !state.hasAnimations || state.activeIndex < 0;
     btnPasteClipKeys.disabled = !animationClipboard;
     btnResetBonePose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
@@ -1828,6 +1834,21 @@ function createRestPoseClip(): void {
     refreshAnimationBar(viewer.getAnimationState());
     syncAnimationEditor();
     showToast('已从默认 T-Pose 创建新动画', 'success');
+}
+
+function createCurrentPoseClip(): void {
+    const index = viewer.createCurrentPoseAnimationClip('Current Pose Action');
+    if (index < 0) {
+        showToast('当前模型没有可创建动画的骨骼', 'error');
+        return;
+    }
+
+    selectedKeyframeTimes = [];
+    markActiveDocumentDirty();
+    openAnimationInspector();
+    refreshAnimationBar(viewer.getAnimationState());
+    syncAnimationEditor();
+    showToast('已从当前姿态创建新动画', 'success');
 }
 
 function mirrorSelectedBonePose(): void {

@@ -1570,6 +1570,36 @@ export class Viewer {
         return newIndex;
     }
 
+    createCurrentPoseAnimationClip(name = 'Current Pose Action'): number {
+        const root = this.getActiveRoot();
+        if (!root || this.bones.length === 0) return -1;
+
+        if (this.activeAction) this.activeAction.paused = true;
+        this.animationPlaying = false;
+        root.updateMatrixWorld(true);
+
+        const tracks: KeyframeTrack[] = [];
+        const times = [0, 1];
+        for (const bone of this.bones) {
+            const position = [bone.position.x, bone.position.y, bone.position.z];
+            const quaternion = [bone.quaternion.x, bone.quaternion.y, bone.quaternion.z, bone.quaternion.w];
+            const scale = [bone.scale.x, bone.scale.y, bone.scale.z];
+            tracks.push(new VectorKeyframeTrack(getBoneTrackName(bone, 'position'), times, [...position, ...position]));
+            tracks.push(new QuaternionKeyframeTrack(getBoneTrackName(bone, 'quaternion'), times, [...quaternion, ...quaternion]));
+            tracks.push(new VectorKeyframeTrack(getBoneTrackName(bone, 'scale'), times, [...scale, ...scale]));
+        }
+
+        const clip = new AnimationClip(this.uniqueAnimationClipName(name), 1, tracks);
+        this.animClips.push(clip);
+        this.bindAnimationClipsToRoot(root);
+        this.ensureAnimationMixer(root);
+        const newIndex = this.animClips.length - 1;
+        this.refreshAnimationClipMetas();
+        this.selectAnimationClip(newIndex, { autoPlay: false });
+        this.onAnimationsChanged(this.getAnimationState());
+        return newIndex;
+    }
+
     replaceActiveAnimationTracksFromSnapshot(snapshot: AnimationClipSnapshot): boolean {
         const clip = this.ensureActiveAnimationClip();
         if (!clip) return false;
