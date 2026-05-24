@@ -3166,7 +3166,8 @@ export class Viewer {
         for (const track of clip.tracks) {
             const parsed = parseAnimationTrackName(track.name);
             if (parsed.property !== 'position' && parsed.property !== 'quaternion' && parsed.property !== 'scale') continue;
-            const bone = boneByTarget.get(parsed.target);
+            const bone = boneByTarget.get(parsed.target)
+                ?? this.bones.find((candidate, index) => trackTargetMatchesBone(parsed.target, candidate, index));
             if (!bone) continue;
             let times = timesByBone.get(bone);
             if (!times) {
@@ -3612,23 +3613,24 @@ function trackTargetsBoneProperty(
 ): boolean {
     const parsed = parseAnimationTrackName(track.name);
     if (parsed.property !== property) return false;
-    const boneNames = new Set([
-        bone.name,
-        bone.uuid,
-        getBoneDisplayName(bone, -1),
-    ].filter(Boolean));
-    return boneNames.has(parsed.target) || track.name === getBoneTrackName(bone, property);
+    return trackTargetMatchesBone(parsed.target, bone) || track.name === getBoneTrackName(bone, property);
 }
 
 function trackTargetsBone(track: KeyframeTrack, bone: Bone): boolean {
     const parsed = parseAnimationTrackName(track.name);
     if (parsed.property !== 'position' && parsed.property !== 'quaternion' && parsed.property !== 'scale') return false;
-    const boneNames = new Set([
-        bone.name,
-        bone.uuid,
-        getBoneDisplayName(bone, -1),
-    ].filter(Boolean));
-    return boneNames.has(parsed.target) || track.name === getBoneTrackName(bone, parsed.property);
+    return trackTargetMatchesBone(parsed.target, bone) || track.name === getBoneTrackName(bone, parsed.property);
+}
+
+function trackTargetMatchesBone(target: string, bone: Bone, index = -1): boolean {
+    const aliases = [bone.name, bone.uuid];
+    if (index >= 0) aliases.push(getBoneDisplayName(bone, index));
+    const boneNames = new Set(aliases.filter(Boolean));
+    if (boneNames.has(target)) return true;
+    for (const name of boneNames) {
+        if (target.endsWith(`.${name}`) || target.endsWith(`/${name}`)) return true;
+    }
+    return false;
 }
 
 function getBonePropertyValue(
