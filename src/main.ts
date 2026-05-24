@@ -1398,7 +1398,8 @@ function setupKeyboardShortcuts(): void {
 
         const shiftFrameStep = event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && (key === '[' || key === ']');
         const timelineZoomStep = !event.ctrlKey && !event.metaKey && !event.altKey && (key === '=' || key === '+' || key === '-');
-        if (!noMods && !shiftFrameStep && !timelineZoomStep) return;
+        const shiftTimelineNav = event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && (key === 'ArrowLeft' || key === 'ArrowRight');
+        if (!noMods && !shiftFrameStep && !timelineZoomStep && !shiftTimelineNav) return;
 
         const state = viewer.getAnimationState();
 
@@ -1472,7 +1473,10 @@ function setupKeyboardShortcuts(): void {
 
         // Arrow Left / Right — selected timeline keyframe previous / next.
         if (key === 'ArrowLeft' || key === 'ArrowRight') {
-            if (selectAdjacentTimelineKeyframe(key === 'ArrowRight' ? 1 : -1)) {
+            const changed = event.shiftKey
+                ? extendAdjacentTimelineKeyframeSelection(key === 'ArrowRight' ? 1 : -1)
+                : selectAdjacentTimelineKeyframe(key === 'ArrowRight' ? 1 : -1);
+            if (changed) {
                 event.preventDefault();
             }
             return;
@@ -1609,6 +1613,30 @@ function selectAdjacentTimelineKeyframe(direction: 1 | -1): boolean {
     if (target === undefined) return true;
 
     setSelectedKeyframeTimes([target]);
+    viewer.seekAnimation(target);
+    renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+    return true;
+}
+
+function extendAdjacentTimelineKeyframeSelection(direction: 1 | -1): boolean {
+    const state = viewer.getAnimationState();
+    if (!state.hasAnimations || state.duration <= 0) return false;
+    if (selectedKeyframeTimes.length === 0) return selectAdjacentTimelineKeyframe(direction);
+
+    const markers = [...new Set(getTimelineVisibleMarkers(viewer.getSkeletonEditorState()).map((marker) => Number(marker.time.toFixed(4))))]
+        .sort((a, b) => a - b);
+    if (markers.length === 0) return false;
+
+    const edge = direction > 0 ? Math.max(...selectedKeyframeTimes) : Math.min(...selectedKeyframeTimes);
+    const target = direction > 0
+        ? markers.find((time) => time > edge + 1e-4)
+        : [...markers].reverse().find((time) => time < edge - 1e-4);
+    if (target === undefined) return true;
+
+    selectKeyframeTimeRange(
+        Math.min(...selectedKeyframeTimes, target),
+        Math.max(...selectedKeyframeTimes, target),
+    );
     viewer.seekAnimation(target);
     renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
     return true;
