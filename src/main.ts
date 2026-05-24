@@ -2186,6 +2186,7 @@ function renderAnimationClipList(state: AnimationPlaybackState): void {
     const renderKey = [
         query,
         state.activeIndex,
+        timelineFps,
         state.clips.map((clip) => [
             clip.index,
             clip.name,
@@ -2205,9 +2206,10 @@ function renderAnimationClipList(state: AnimationPlaybackState): void {
             const active = clip.index === state.activeIndex;
             const selected = active ? ' aria-selected="true"' : ' aria-selected="false"';
             const className = `anim-clip-item${active ? ' active' : ''}`;
+            const frames = Math.max(1, Math.round(clip.duration * timelineFps));
             const meta = clip.lazy
-                ? `${clip.duration.toFixed(2)}s · ${clip.tracks} · 按需`
-                : `${clip.duration.toFixed(2)}s · ${clip.tracks}`;
+                ? `${clip.duration.toFixed(2)}s · F${frames} · ${clip.tracks} · 按需`
+                : `${clip.duration.toFixed(2)}s · F${frames} · ${clip.tracks}`;
             return `
                 <button class="${className}" type="button" role="option" data-clip-index="${clip.index}"${selected}>
                     <span class="anim-clip-name">${escapeHtml(clip.name)}</span>
