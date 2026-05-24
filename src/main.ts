@@ -1499,6 +1499,16 @@ function setupAnimationControls(): void {
         renderAnimationClipList(viewer.getAnimationState());
     });
 
+    animClipSearch.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        const first = animClipList.querySelector<HTMLElement>('[data-clip-index]');
+        if (!first) return;
+        const index = Number(first.dataset.clipIndex);
+        if (!Number.isFinite(index)) return;
+        event.preventDefault();
+        void activateAnimationClip(index, viewer.getAnimationState().playing);
+    });
+
     animClipList.addEventListener('click', (event) => {
         const target = event.target as HTMLElement;
         const action = target.closest<HTMLButtonElement>('.anim-clip-action');
@@ -1559,6 +1569,16 @@ function setupAnimationControls(): void {
 
     animBoneSearch.addEventListener('input', () => {
         renderSkeletonControls(viewer.getSkeletonEditorState());
+    });
+
+    animBoneSearch.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter') return;
+        const first = animBoneList.querySelector<HTMLButtonElement>('[data-bone-index]');
+        if (!first) return;
+        const index = Number(first.dataset.boneIndex);
+        if (!Number.isFinite(index)) return;
+        event.preventDefault();
+        viewer.selectBone(index);
     });
 
     animBoneList.addEventListener('click', (event) => {
