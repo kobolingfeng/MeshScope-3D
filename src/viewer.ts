@@ -479,7 +479,9 @@ export class Viewer {
             if (this.ikEnabled) this.solveIk();
             this.refreshActiveRootMatrices();
             this.updateSkeletonOverlay();
-            this.onSkeletonChanged(this.getSkeletonEditorState());
+            if (!this.transformDragging) {
+                this.onSkeletonChanged(this.getSkeletonEditorState());
+            }
         });
         this.canvas.addEventListener('pointerdown', (event) => this.handleSkeletonPointerDown(event), true);
 
