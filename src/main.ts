@@ -1215,6 +1215,26 @@ function setupKeyboardShortcuts(): void {
             return;
         }
 
+        if (event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && lowerKey === 'k') {
+            if (viewer.getSelectedBoneLocalTrs()) {
+                event.preventDefault();
+                let count = 0;
+                runAnimationEdit('插入子链关键帧', () => {
+                    count = viewer.insertSelectedBoneChainKeyframe();
+                });
+                showToast(count > 0 ? `已给 ${count} 根骨骼插入关键帧` : '没有可插入的子链关键帧', count > 0 ? 'success' : 'info');
+            }
+            return;
+        }
+
+        if (event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && lowerKey === 'm') {
+            if (viewer.getSelectedBoneLocalTrs()) {
+                event.preventDefault();
+                mirrorSelectedBoneChainPose();
+            }
+            return;
+        }
+
         if (!noMods) return;
 
         const state = viewer.getAnimationState();
@@ -1261,16 +1281,8 @@ function setupKeyboardShortcuts(): void {
         if (lowerKey === 'k') {
             if (viewer.getSelectedBoneLocalTrs()) {
                 event.preventDefault();
-                if (event.shiftKey) {
-                    let count = 0;
-                    runAnimationEdit('插入子链关键帧', () => {
-                        count = viewer.insertSelectedBoneChainKeyframe();
-                    });
-                    showToast(count > 0 ? `已给 ${count} 根骨骼插入关键帧` : '没有可插入的子链关键帧', count > 0 ? 'success' : 'info');
-                } else {
-                    runAnimationEdit('插入关键帧', () => viewer.insertSelectedBoneKeyframe());
-                    showToast('已插入关键帧', 'success');
-                }
+                runAnimationEdit('插入关键帧', () => viewer.insertSelectedBoneKeyframe());
+                showToast('已插入关键帧', 'success');
             }
             return;
         }
