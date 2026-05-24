@@ -1322,8 +1322,17 @@ export class Viewer {
     }
 
     deleteSelectedBoneKeyframesAtTimes(times: number[]): void {
+        if (!this.selectedBone) return;
+        this.deleteKeyframesAtTimesInternal(times, this.selectedBone);
+    }
+
+    deleteKeyframesAtTimes(times: number[]): void {
+        this.deleteKeyframesAtTimesInternal(times, null);
+    }
+
+    private deleteKeyframesAtTimesInternal(times: number[], bone: Bone | null): void {
         const clip = this.animClips[this.activeClipIndex];
-        if (!clip || !this.selectedBone || times.length === 0) return;
+        if (!clip || times.length === 0) return;
 
         let changed = false;
         const nextTracks: KeyframeTrack[] = [];
@@ -1331,7 +1340,7 @@ export class Viewer {
             let nextTrack: KeyframeTrack | null = track;
             for (const time of times) {
                 if (!nextTrack) break;
-                const candidate = removeKeyframeNearTime(nextTrack, this.selectedBone, time);
+                const candidate = removeKeyframeNearTime(nextTrack, bone, time);
                 if (candidate !== nextTrack) changed = true;
                 nextTrack = candidate;
             }
@@ -2620,10 +2629,12 @@ function upsertBoneKeyframe(
     clip.tracks[existingIndex] = cloneTrackWithData(track, times, values);
 }
 
-function removeKeyframeNearTime(track: KeyframeTrack, bone: Bone, time: number): KeyframeTrack | null {
-    const property = parseAnimationTrackName(track.name).property;
-    if (property !== 'position' && property !== 'quaternion' && property !== 'scale') return track;
-    if (!trackTargetsBoneProperty(track, bone, property)) return track;
+function removeKeyframeNearTime(track: KeyframeTrack, bone: Bone | null, time: number): KeyframeTrack | null {
+    if (bone) {
+        const property = parseAnimationTrackName(track.name).property;
+        if (property !== 'position' && property !== 'quaternion' && property !== 'scale') return track;
+        if (!trackTargetsBoneProperty(track, bone, property)) return track;
+    }
 
     const times = Array.from(track.times as ArrayLike<number>);
     const valueSize = track.getValueSize();

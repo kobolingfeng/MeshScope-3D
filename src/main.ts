@@ -1396,7 +1396,7 @@ function setupAnimationControls(): void {
         if (selectedKeyframeTimes.length > 0) {
             const count = selectedKeyframeTimes.length;
             runAnimationEdit('删除选中关键帧', () => {
-                viewer.deleteSelectedBoneKeyframesAtTimes(selectedKeyframeTimes);
+                viewer.deleteKeyframesAtTimes(selectedKeyframeTimes);
             });
             selectedKeyframeTimes = [];
             showToast(`已删除 ${count} 个选中关键帧`, 'success');
