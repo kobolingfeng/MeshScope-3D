@@ -1224,6 +1224,12 @@ function findMirroredBoneName(name: string): string | null {
     return null;
 }
 
+function focusSearchInput(input: HTMLInputElement): void {
+    if (input.disabled) return;
+    input.focus();
+    input.select();
+}
+
 // ----- Keyboard shortcuts ----------------------------------------------------
 
 function setupKeyboardShortcuts(): void {
@@ -1256,6 +1262,18 @@ function setupKeyboardShortcuts(): void {
                 renderAnimationTimeline(viewer.getSkeletonEditorState(), state);
                 return;
             }
+        }
+
+        if (!event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && key === '/') {
+            event.preventDefault();
+            focusSearchInput(animClipSearch);
+            return;
+        }
+
+        if (ctrlOnly && !event.shiftKey && key === '/') {
+            event.preventDefault();
+            focusSearchInput(animBoneSearch);
+            return;
         }
 
         // Ctrl+C / Ctrl+Shift+C / Ctrl+V / Ctrl+Shift+V — bone pose clipboard.
