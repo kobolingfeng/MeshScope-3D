@@ -286,6 +286,7 @@ const animKeyframeStrip = $('anim-keyframe-strip');
 const btnInsertKeyframe = $<HTMLButtonElement>('btn-insert-keyframe');
 const btnDeleteKeyframe = $<HTMLButtonElement>('btn-delete-keyframe');
 const btnResetBonePose = $<HTMLButtonElement>('btn-reset-bone-pose');
+const btnResetBoneChainPose = $<HTMLButtonElement>('btn-reset-bone-chain-pose');
 const btnMirrorBonePose = $<HTMLButtonElement>('btn-mirror-bone-pose');
 const btnMirrorAnimation = $<HTMLButtonElement>('btn-mirror-animation');
 const btnAnimHistoryUndo = $<HTMLButtonElement>('btn-anim-history-undo');
@@ -1439,6 +1440,14 @@ function setupAnimationControls(): void {
         showToast(changed ? '已重置当前骨骼姿态' : '没有可重置的骨骼', changed ? 'success' : 'info');
     });
 
+    btnResetBoneChainPose.addEventListener('click', () => {
+        let count = 0;
+        runAnimationEdit('重置骨骼子链姿态', () => {
+            count = viewer.resetSelectedBoneChainPose();
+        });
+        showToast(count > 0 ? `已重置 ${count} 根骨骼` : '没有可重置的骨骼子链', count > 0 ? 'success' : 'info');
+    });
+
     btnMirrorBonePose.addEventListener('click', () => {
         mirrorSelectedBonePose();
     });
@@ -1699,6 +1708,7 @@ function syncAnimationClipTools(state: AnimationPlaybackState): void {
     btnCopyClipKeys.disabled = !state.hasAnimations || state.activeIndex < 0;
     btnPasteClipKeys.disabled = !animationClipboard;
     btnResetBonePose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
+    btnResetBoneChainPose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
     btnMirrorBonePose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
     btnMirrorAnimation.disabled = !hasSkeleton || !state.hasAnimations || state.activeIndex < 0;
 }

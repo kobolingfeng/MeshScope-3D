@@ -1718,6 +1718,30 @@ export class Viewer {
         return true;
     }
 
+    resetSelectedBoneChainPose(): number {
+        const root = this.selectedBone;
+        if (!root) return 0;
+        const targets = this.bones.filter((bone) => bone === root || this.isBoneDescendantOf(bone, root));
+        let changed = 0;
+        for (const bone of targets) {
+            const rest = this.boneRestPose.get(bone);
+            if (!rest) continue;
+            bone.position.copy(rest.position);
+            bone.quaternion.copy(rest.quaternion);
+            bone.scale.copy(rest.scale);
+            bone.updateMatrixWorld(true);
+            changed += 1;
+        }
+        if (changed === 0) return 0;
+        if (this.ikEnabled) this.solveIk();
+        this.refreshActiveRootMatrices();
+        this.updateSkeletonOverlay();
+        const clip = this.ensureActiveAnimationClip();
+        if (clip) this.autoKeyframeBonePoseTargets(clip, targets);
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+        return changed;
+    }
+
     stepSelectedBoneTransform(axis: 'x' | 'y' | 'z', direction: 1 | -1): boolean {
         const bone = this.selectedBone;
         if (!bone) return false;
@@ -2453,9 +2477,13 @@ export class Viewer {
 
     private isSelectedBoneDescendant(bone: Bone): boolean {
         if (!this.selectedBone || bone === this.selectedBone) return false;
+        return this.isBoneDescendantOf(bone, this.selectedBone);
+    }
+
+    private isBoneDescendantOf(bone: Bone, ancestor: Bone): boolean {
         let current = bone.parent;
         while (current) {
-            if (current === this.selectedBone) return true;
+            if (current === ancestor) return true;
             current = current.parent;
         }
         return false;
