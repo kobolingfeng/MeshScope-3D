@@ -312,6 +312,12 @@ export class Viewer {
         trackCount: number;
         markers: AnimationTimelineMarker[];
     } | null = null;
+    private boneKeyframeCountCache: {
+        clip: AnimationClip;
+        trackCount: number;
+        boneCount: number;
+        counts: Map<Bone, number>;
+    } | null = null;
     private activeAction: AnimationAction | null = null;
     private activeClipIndex = -1;
     private animationPlaying = false;
@@ -2639,6 +2645,7 @@ export class Viewer {
     private refreshAnimationClipMetas(): void {
         this.animationEditorCache = null;
         this.timelineMarkerCache = null;
+        this.boneKeyframeCountCache = null;
         this.animClipMetas = this.animClips.map((clip, index) => {
             const lazy = getLazyAnimationClipSource(clip);
             return {
@@ -2818,6 +2825,7 @@ export class Viewer {
         this.boneRestPose.clear();
         this.boneMetaBase = [];
         this.timelineMarkerCache = null;
+        this.boneKeyframeCountCache = null;
         this.selectedBone = null;
         this.ikEnabled = false;
         this.onSkeletonChanged(this.getSkeletonEditorState());
@@ -3186,6 +3194,16 @@ export class Viewer {
         const counts = new Map<Bone, number>();
         if (!clip || clip.tracks.length === 0 || this.bones.length === 0) return counts;
 
+        const cache = this.boneKeyframeCountCache;
+        if (
+            cache
+            && cache.clip === clip
+            && cache.trackCount === clip.tracks.length
+            && cache.boneCount === this.bones.length
+        ) {
+            return cache.counts;
+        }
+
         const boneByTarget = new Map<string, Bone>();
         for (let index = 0; index < this.bones.length; index += 1) {
             const bone = this.bones[index];
@@ -3212,6 +3230,12 @@ export class Viewer {
         }
 
         for (const [bone, times] of timesByBone) counts.set(bone, times.size);
+        this.boneKeyframeCountCache = {
+            clip,
+            trackCount: clip.tracks.length,
+            boneCount: this.bones.length,
+            counts,
+        };
         return counts;
     }
 
