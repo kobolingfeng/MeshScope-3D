@@ -349,6 +349,7 @@ let selectedAnimationTrackIndex = -1;
 let selectedKeyframeTimes: number[] = [];
 let animationClipboard: AnimationClipSnapshot | null = null;
 const lazyAnimationLoads = new Map<string, Promise<boolean>>();
+let animationClipListRenderKey = '';
 let lastScrolledBoneIndex = -1;
 let timelineZoom = 1;
 let timelineSnapEnabled = true;
@@ -1561,6 +1562,7 @@ function refreshAnimationBar(state: AnimationPlaybackState): void {
     if (!state.hasAnimations) {
         animBar.hidden = true;
         animBar.classList.remove('is-playing');
+        animationClipListRenderKey = '';
         animClipList.innerHTML = '';
         animTimeRange.value = '0';
         animTimeRange.max = '0';
@@ -1602,6 +1604,19 @@ function refreshAnimationBar(state: AnimationPlaybackState): void {
 function renderAnimationClipList(state: AnimationPlaybackState): void {
     const query = normalizeSearchText(animClipSearch.value);
     const clips = state.clips.filter((clip) => normalizeSearchText(clip.name).includes(query));
+    const renderKey = [
+        query,
+        state.activeIndex,
+        state.clips.map((clip) => [
+            clip.index,
+            clip.name,
+            clip.duration.toFixed(4),
+            clip.tracks,
+            clip.lazy ? 1 : 0,
+        ].join(':')).join('|'),
+    ].join('||');
+    if (renderKey === animationClipListRenderKey) return;
+    animationClipListRenderKey = renderKey;
 
     animClipList.innerHTML = clips.length > 0
         ? clips.map((clip) => {
