@@ -1039,6 +1039,7 @@ summary:focus-visible,
 
 .animation-bone-name {
     min-width: 0;
+    padding-left: calc(var(--bone-depth, 0) * 10px);
     overflow: hidden;
     font-size: 12px;
     font-weight: 700;

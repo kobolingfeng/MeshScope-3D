@@ -200,6 +200,7 @@ export type SkeletonBoneMeta = {
     index: number;
     name: string;
     parentName: string;
+    depth: number;
     selected: boolean;
 };
 
@@ -2130,6 +2131,7 @@ export class Viewer {
             parentName: bone.parent && (bone.parent as Bone).isBone
                 ? getBoneDisplayName(bone.parent as Bone, this.bones.indexOf(bone.parent as Bone))
                 : '',
+            depth: getBoneDepth(bone),
         }));
         if (this.bones.length === 0) {
             this.onSkeletonChanged(this.getSkeletonEditorState());
@@ -2566,6 +2568,16 @@ function collectBones(root: Object3D): Bone[] {
 
 function getBoneChildren(bone: Bone): Bone[] {
     return bone.children.filter((child): child is Bone => (child as Bone).isBone);
+}
+
+function getBoneDepth(bone: Bone): number {
+    let depth = 0;
+    let current = bone.parent;
+    while (current) {
+        if ((current as Bone).isBone) depth += 1;
+        current = current.parent;
+    }
+    return depth;
 }
 
 function getBoneSegmentCount(bone: Bone): number {

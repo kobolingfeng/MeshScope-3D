@@ -1971,8 +1971,9 @@ function renderSkeletonControls(state: SkeletonEditorState): void {
     animBoneList.innerHTML = bones.length > 0
         ? bones.map((bone) => {
             const active = bone.selected ? ' active' : '';
+            const depth = clamp(bone.depth, 0, 12);
             return `
-                <button class="animation-bone-item${active}" type="button" role="option" data-bone-index="${bone.index}" aria-selected="${bone.selected}">
+                <button class="animation-bone-item${active}" type="button" role="option" data-bone-index="${bone.index}" aria-selected="${bone.selected}" style="--bone-depth:${depth}">
                     <span class="animation-bone-name">${escapeHtml(bone.name)}</span>
                     <span class="animation-bone-parent">${escapeHtml(bone.parentName || '根')}</span>
                 </button>
