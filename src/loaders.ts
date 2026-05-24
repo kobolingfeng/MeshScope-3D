@@ -23,7 +23,7 @@ export type LazyGlbAnimationSource = {
 };
 
 export const ACCEPT_EXTS: SupportedExt[] = ['gltf', 'glb', 'obj', 'stl', 'ply', 'fbx'];
-const LARGE_GLB_PREVIEW_THRESHOLD = 512 * 1024 * 1024;
+const LARGE_GLB_PREVIEW_THRESHOLD = 128 * 1024 * 1024;
 
 export function extOf(name: string): string {
     const i = name.lastIndexOf('.');
