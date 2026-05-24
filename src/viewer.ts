@@ -499,6 +499,7 @@ export class Viewer {
         const delta = this.animClock.getDelta();
         if (this.mixer && this.animationPlaying) {
             this.mixer.update(delta);
+            this.refreshActiveRootMatrices();
             const t = this.activeAction?.time ?? 0;
             // 30 Hz UI throttle for animation callbacks — viewport renders at full FPS,
             // but DOM/timeline updates don't need more than that and saved noticeable CPU.
@@ -2303,6 +2304,7 @@ export class Viewer {
         this.animationFinished = false;
         this.lastReportedTime = -1;
         this.mixer.update(0);
+        this.refreshActiveRootMatrices();
         this.onAnimationsChanged(this.getAnimationState());
         this.onSkeletonChanged(this.getSkeletonEditorState());
     }
@@ -2351,6 +2353,7 @@ export class Viewer {
         this.activeAction.paused = !this.animationPlaying;
         this.animationFinished = false;
         this.mixer.update(0);
+        this.refreshActiveRootMatrices();
         this.lastReportedTime = -1;
         this.onAnimationsChanged(this.getAnimationState());
     }
