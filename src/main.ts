@@ -1713,7 +1713,10 @@ async function activateAnimationClip(index: number, autoPlay: boolean): Promise<
     viewer.selectAnimationClip(index, { autoPlay });
 }
 
-async function ensureAnimationClipLoaded(index: number, opts: { autoPlay?: boolean } = {}): Promise<boolean> {
+async function ensureAnimationClipLoaded(
+    index: number,
+    opts: { autoPlay?: boolean; activate?: boolean; quiet?: boolean } = {},
+): Promise<boolean> {
     const source = viewer.getLazyAnimationClipSource(index);
     if (!source) return true;
 
@@ -1723,30 +1726,32 @@ async function ensureAnimationClipLoaded(index: number, opts: { autoPlay?: boole
 
     const task = (async () => {
         const label = source.name || `Animation ${source.index + 1}`;
-        showLoading(`正在载入动画 ${label} …`);
+        if (!opts.quiet) showLoading(`正在载入动画 ${label} …`);
         try {
             const clip = await loadGLBAnimationClipFromPath(source.path, source.index);
             if (!clip.name || !clip.name.trim()) clip.name = label;
             const replaced = viewer.replaceAnimationClip(index, clip, {
-                activate: true,
+                activate: opts.activate ?? true,
                 autoPlay: opts.autoPlay ?? false,
             });
             if (!replaced) {
-                showToast('动画载入后绑定失败', 'error');
+                if (!opts.quiet) showToast('动画载入后绑定失败', 'error');
                 return false;
             }
             selectedKeyframeTimes = [];
-            refreshAnimationBar(viewer.getAnimationState());
-            syncAnimationEditor();
-            showToast(`已载入动画 ${label}`, 'success');
+            if (!opts.quiet) {
+                refreshAnimationBar(viewer.getAnimationState());
+                syncAnimationEditor();
+            }
+            if (!opts.quiet) showToast(`已载入动画 ${label}`, 'success');
             return true;
         } catch (error) {
             console.error(error);
             const message = error instanceof Error ? error.message : String(error);
-            showToast(`动画载入失败: ${message}`, 'error');
+            if (!opts.quiet) showToast(`动画载入失败: ${message}`, 'error');
             return false;
         } finally {
-            hideLoading();
+            if (!opts.quiet) hideLoading();
             lazyAnimationLoads.delete(key);
         }
     })();
@@ -4660,6 +4665,8 @@ async function saveActiveDocument(choice: SaveChoice): Promise<void> {
 
     const binary = choice.animationScope === 'current' || extOf(targetPath) !== 'gltf';
     const actionLabel = choice.animationScope === 'current' ? '导出当前动画' : '保存';
+    const prepared = await ensureAnimationsLoadedForExport(choice.animationScope);
+    if (!prepared) return;
     showLoading(`正在${actionLabel} ${fileNameOfPath(targetPath)} …`);
 
     try {
@@ -4695,6 +4702,43 @@ async function saveActiveDocument(choice: SaveChoice): Promise<void> {
     } finally {
         hideLoading();
     }
+}
+
+async function ensureAnimationsLoadedForExport(scope: AnimationExportScope): Promise<boolean> {
+    const state = viewer.getAnimationState();
+    const activeIndex = state.activeIndex;
+    const indices = scope === 'current'
+        ? (activeIndex >= 0 ? [activeIndex] : [])
+        : state.clips
+            .filter((clip) => clip.lazy)
+            .map((clip) => clip.index);
+    if (indices.length === 0) return true;
+
+    showLoading(`正在准备导出动画 1 / ${indices.length} …`);
+    try {
+        for (let offset = 0; offset < indices.length; offset += 1) {
+            const index = indices[offset];
+            showLoading(`正在准备导出动画 ${offset + 1} / ${indices.length} …`);
+            const loaded = await ensureAnimationClipLoaded(index, {
+                autoPlay: false,
+                activate: scope === 'current',
+                quiet: true,
+            });
+            if (!loaded) {
+                showToast('导出取消：有按需动画载入失败', 'error');
+                return false;
+            }
+        }
+    } finally {
+        hideLoading();
+    }
+
+    if (scope === 'all' && activeIndex >= 0) {
+        viewer.selectAnimationClip(activeIndex, { autoPlay: false });
+    }
+    refreshAnimationBar(viewer.getAnimationState());
+    syncAnimationEditor();
+    return true;
 }
 
 async function exportActiveDocument(
