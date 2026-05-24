@@ -4708,6 +4708,7 @@ function areAnimationSnapshotsEqual(a: AnimationClipSnapshot, b: AnimationClipSn
     if (a.clipIndex !== b.clipIndex) return false;
     if (a.clipName !== b.clipName) return false;
     if (!nearlyEqual(a.duration, b.duration)) return false;
+    if (!areLazyAnimationSourcesEqual(a.lazy, b.lazy)) return false;
     if (a.tracks.length !== b.tracks.length) return false;
 
     for (let index = 0; index < a.tracks.length; index += 1) {
@@ -4720,6 +4721,20 @@ function areAnimationSnapshotsEqual(a: AnimationClipSnapshot, b: AnimationClipSn
     }
 
     return true;
+}
+
+function areLazyAnimationSourcesEqual(
+    a: AnimationClipSnapshot['lazy'],
+    b: AnimationClipSnapshot['lazy'],
+): boolean {
+    if (!a && !b) return true;
+    if (!a || !b) return false;
+    return a.type === b.type
+        && a.path === b.path
+        && a.index === b.index
+        && a.name === b.name
+        && nearlyEqual(a.duration, b.duration)
+        && a.tracks === b.tracks;
 }
 
 function areAnimationLibrarySnapshotsEqual(a: AnimationLibrarySnapshot, b: AnimationLibrarySnapshot): boolean {

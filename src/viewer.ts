@@ -163,6 +163,7 @@ export type AnimationClipSnapshot = {
     clipIndex: number;
     clipName: string;
     duration: number;
+    lazy?: LazyAnimationClipSource;
     tracks: Array<{
         index: number;
         name: string;
@@ -1492,6 +1493,7 @@ export class Viewer {
             clipIndex: index,
             clipName: clip.name,
             duration: clip.duration,
+            lazy: cloneLazyAnimationSource(getLazyAnimationClipSource(clip)),
             tracks: clip.tracks.map((track, index) => ({
                 index,
                 name: track.name,
@@ -1508,6 +1510,7 @@ export class Viewer {
                 clipIndex: index,
                 clipName: clip.name,
                 duration: clip.duration,
+                lazy: cloneLazyAnimationSource(getLazyAnimationClipSource(clip)),
                 tracks: clip.tracks.map((track, trackIndex) => ({
                     index: trackIndex,
                     name: track.name,
@@ -1531,15 +1534,19 @@ export class Viewer {
         this.animationFinished = false;
         this.lastReportedTime = -1;
 
-        this.animClips = snapshot.clips.map((clipSnapshot) => new AnimationClip(
-            clipSnapshot.clipName,
-            Math.max(0.001, clipSnapshot.duration),
-            clipSnapshot.tracks.map((trackSnapshot) => createTrackFromSnapshot(
-                trackSnapshot.name,
-                trackSnapshot.times,
-                trackSnapshot.values,
-            )),
-        ));
+        this.animClips = snapshot.clips.map((clipSnapshot) => {
+            const clip = new AnimationClip(
+                clipSnapshot.clipName,
+                Math.max(0.001, clipSnapshot.duration),
+                clipSnapshot.tracks.map((trackSnapshot) => createTrackFromSnapshot(
+                    trackSnapshot.name,
+                    trackSnapshot.times,
+                    trackSnapshot.values,
+                )),
+            );
+            setLazyAnimationClipSource(clip, clipSnapshot.lazy);
+            return clip;
+        });
 
         if (root) {
             this.bindAnimationClipsToRoot(root);
@@ -1652,6 +1659,7 @@ export class Viewer {
             trackSnapshot.times,
             trackSnapshot.values,
         ));
+        setLazyAnimationClipSource(clip, snapshot.lazy);
 
         this.refreshAnimationClipMetas();
         this.refreshActiveAnimationAfterEdit(snapshot.clipIndex);
@@ -2977,6 +2985,22 @@ function getLazyAnimationClipSource(clip: AnimationClip): LazyAnimationClipSourc
         duration: typeof source.duration === 'number' ? source.duration : clip.duration,
         tracks: typeof source.tracks === 'number' ? source.tracks : clip.tracks.length,
     };
+}
+
+function cloneLazyAnimationSource(source: LazyAnimationClipSource | null): LazyAnimationClipSource | undefined {
+    return source ? { ...source } : undefined;
+}
+
+function setLazyAnimationClipSource(clip: AnimationClip, source: LazyAnimationClipSource | undefined): void {
+    const target = clip as AnimationClip & {
+        userData?: { __meshscopeLazyGlbAnimation?: LazyAnimationClipSource };
+    };
+    if (!source) {
+        if (target.userData) delete target.userData.__meshscopeLazyGlbAnimation;
+        return;
+    }
+    target.userData = target.userData ?? {};
+    target.userData.__meshscopeLazyGlbAnimation = { ...source };
 }
 
 function collectBones(root: Object3D): Bone[] {
