@@ -1380,7 +1380,8 @@ function setupKeyboardShortcuts(): void {
             return;
         }
 
-        if (!noMods) return;
+        const shiftFrameStep = event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && (key === '[' || key === ']');
+        if (!noMods && !shiftFrameStep) return;
 
         const state = viewer.getAnimationState();
 
@@ -1388,6 +1389,16 @@ function setupKeyboardShortcuts(): void {
             if (!state.hasAnimations || state.clips.length < 2) return;
             event.preventDefault();
             void selectAdjacentAnimationClip(key === 'PageDown' ? 1 : -1);
+            return;
+        }
+
+        if (key === '[' || key === ']') {
+            if (!state.hasAnimations || state.duration <= 0) return;
+            event.preventDefault();
+            const direction = key === ']' ? 1 : -1;
+            const frames = event.shiftKey ? 10 : 1;
+            const nextTime = clamp(state.time + direction * frames / timelineFps, 0, state.duration);
+            viewer.seekAnimation(snapTimelineTimeToFrame(nextTime, state.duration));
             return;
         }
 
