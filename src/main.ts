@@ -1212,10 +1212,14 @@ function findMirroredBoneName(name: string): string | null {
     const replacements: Array<[RegExp, string]> = [
         [/\.L$/i, '.R'], [/\.R$/i, '.L'],
         [/_L$/i, '_R'],  [/_R$/i, '_L'],
+        [/-L$/i, '-R'],  [/-R$/i, '-L'],
+        [/_l$/i, '_r'],  [/_r$/i, '_l'],
+        [/\bL$/i, 'R'],  [/\bR$/i, 'L'],
         [/^L_/i, 'R_'],  [/^R_/i, 'L_'],
+        [/^l_/i, 'r_'],  [/^r_/i, 'l_'],
         [/^Left/i, 'Right'], [/^Right/i, 'Left'],
         [/Left/g, 'Right'],  [/Right/g, 'Left'],
-        [/\bL\b/, 'R'], [/\bR\b/, 'L'],
+        [/left/g, 'right'],  [/right/g, 'left'],
     ];
     const names = new Set(viewer.getBoneNames());
     for (const [pattern, replacement] of replacements) {
