@@ -300,6 +300,7 @@ const animTimelineScroll = $('anim-timeline-scroll');
 const animKeyframeStrip = $('anim-keyframe-strip');
 const btnInsertKeyframe = $<HTMLButtonElement>('btn-insert-keyframe');
 const btnInsertChainKeyframe = $<HTMLButtonElement>('btn-insert-chain-keyframe');
+const btnInsertAllBonesKeyframe = $<HTMLButtonElement>('btn-insert-all-bones-keyframe');
 const btnDeleteKeyframe = $<HTMLButtonElement>('btn-delete-keyframe');
 const btnResetBonePose = $<HTMLButtonElement>('btn-reset-bone-pose');
 const btnResetBoneChainPose = $<HTMLButtonElement>('btn-reset-bone-chain-pose');
@@ -1267,6 +1268,16 @@ function setupKeyboardShortcuts(): void {
             return;
         }
 
+        if (event.shiftKey && (event.ctrlKey || event.metaKey) && !event.altKey && key === 'Insert') {
+            event.preventDefault();
+            let count = 0;
+            runAnimationEdit('插入全身关键帧', () => {
+                count = viewer.insertAllBonesKeyframe();
+            });
+            showToast(count > 0 ? `已给 ${count} 根骨骼插入全身关键帧` : '没有可插入的骨骼关键帧', count > 0 ? 'success' : 'info');
+            return;
+        }
+
         if (event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && lowerKey === 'm') {
             if (viewer.getSelectedBoneLocalTrs()) {
                 event.preventDefault();
@@ -1727,6 +1738,14 @@ function setupAnimationControls(): void {
             count = viewer.insertSelectedBoneChainKeyframe();
         });
         showToast(count > 0 ? `已给 ${count} 根骨骼插入关键帧` : '没有可插入的子链关键帧', count > 0 ? 'success' : 'info');
+    });
+
+    btnInsertAllBonesKeyframe.addEventListener('click', () => {
+        let count = 0;
+        runAnimationEdit('插入全身关键帧', () => {
+            count = viewer.insertAllBonesKeyframe();
+        });
+        showToast(count > 0 ? `已给 ${count} 根骨骼插入全身关键帧` : '没有可插入的骨骼关键帧', count > 0 ? 'success' : 'info');
     });
 
     btnDeleteKeyframe.addEventListener('click', () => {
@@ -2442,6 +2461,7 @@ function renderSkeletonControls(
     }
     btnInsertKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnInsertChainKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    btnInsertAllBonesKeyframe.disabled = !state.hasSkeleton;
     btnDeleteKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnCopyBonePose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnPasteBonePose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !bonePoseClipboard;

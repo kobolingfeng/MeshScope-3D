@@ -1394,6 +1394,15 @@ export class Viewer {
         return targets.length;
     }
 
+    insertAllBonesKeyframe(): number {
+        const clip = this.ensureActiveAnimationClip();
+        if (!clip || this.bones.length === 0) return 0;
+
+        const targets = [...this.bones];
+        if (!this.autoKeyframeBonePoseTargets(clip, targets)) return 0;
+        return targets.length;
+    }
+
     autoKeyframeCurrentBonePose(): boolean {
         if (!this.autoKeyframeEnabled) return false;
         const clip = this.ensureActiveAnimationClip();
