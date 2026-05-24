@@ -288,6 +288,7 @@ const animIkMode = $<HTMLButtonElement>('anim-ik-mode');
 const animIkChainLengthInput = $<HTMLInputElement>('anim-ik-chain-length');
 const animRotationStepInput = $<HTMLInputElement>('anim-rotation-step');
 const animTranslationStepInput = $<HTMLInputElement>('anim-translation-step');
+const animTimelineScroll = $('anim-timeline-scroll');
 const animKeyframeStrip = $('anim-keyframe-strip');
 const btnInsertKeyframe = $<HTMLButtonElement>('btn-insert-keyframe');
 const btnInsertChainKeyframe = $<HTMLButtonElement>('btn-insert-chain-keyframe');
@@ -1575,10 +1576,11 @@ function setupAnimationControls(): void {
 
     animTimelineZoomInput.addEventListener('input', () => {
         const value = Number(animTimelineZoomInput.value);
-        timelineZoom = Number.isFinite(value) ? clamp(value, 0.5, 4) : 1;
+        timelineZoom = Number.isFinite(value) ? clamp(value, 0.25, 12) : 1;
         renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
     });
 
+    animTimelineScroll.addEventListener('wheel', handleTimelineWheel, { passive: false });
     animKeyframeStrip.addEventListener('click', handleTimelineClick);
     animKeyframeStrip.addEventListener('pointerdown', handleTimelinePointerDown);
     animKeyframeStrip.addEventListener('pointermove', handleTimelinePointerMove);
@@ -2366,8 +2368,38 @@ function updateTimelineSelectionSummary(
 }
 
 function getTimelineContentWidth(duration: number): number {
-    if (duration <= 0) return 1200;
-    return Math.max(1200, Math.ceil(duration * 180 * timelineZoom));
+    if (duration <= 0) return 1600;
+    return Math.max(1600, Math.ceil(duration * 220 * timelineZoom));
+}
+
+function handleTimelineWheel(event: WheelEvent): void {
+    const state = viewer.getAnimationState();
+    if (!state.hasAnimations || state.duration <= 0) return;
+
+    if (event.ctrlKey) {
+        event.preventDefault();
+        const oldWidth = getTimelineContentWidth(state.duration);
+        const rect = animTimelineScroll.getBoundingClientRect();
+        const anchor = clamp(event.clientX - rect.left, 0, rect.width);
+        const anchorRatio = oldWidth > 0
+            ? clamp((animTimelineScroll.scrollLeft + anchor) / oldWidth, 0, 1)
+            : 0;
+        const nextZoom = clamp(timelineZoom * Math.exp(-event.deltaY * 0.0015), 0.25, 12);
+        if (nearlyEqual(nextZoom, timelineZoom)) return;
+        timelineZoom = nextZoom;
+        animTimelineZoomInput.value = String(Number(timelineZoom.toFixed(2)));
+        renderAnimationTimeline(viewer.getSkeletonEditorState(), state);
+        requestAnimationFrame(() => {
+            const nextWidth = getTimelineContentWidth(state.duration);
+            animTimelineScroll.scrollLeft = Math.max(0, nextWidth * anchorRatio - anchor);
+        });
+        return;
+    }
+
+    if (event.shiftKey && Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
+        event.preventDefault();
+        animTimelineScroll.scrollLeft += event.deltaY;
+    }
 }
 
 function buildTimelineTicks(duration: number, width: number): Array<{ time: number; label: string; major: boolean }> {
