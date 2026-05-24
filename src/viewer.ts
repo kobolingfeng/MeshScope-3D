@@ -3122,17 +3122,10 @@ export class Viewer {
             return cache.markers;
         }
 
-        const selectedTrackNames = this.selectedBone
-            ? new Set([
-                getBoneTrackName(this.selectedBone, 'position'),
-                getBoneTrackName(this.selectedBone, 'quaternion'),
-                getBoneTrackName(this.selectedBone, 'scale'),
-            ])
-            : new Set<string>();
         const times = new Map<string, AnimationTimelineMarker>();
 
         for (const track of clip.tracks) {
-            const selectedBone = selectedTrackNames.has(track.name);
+            const selectedBone = this.selectedBone ? trackTargetsBone(track, this.selectedBone) : false;
             for (const rawTime of Array.from(track.times as ArrayLike<number>)) {
                 const key = rawTime.toFixed(4);
                 const existing = times.get(key);
@@ -3611,6 +3604,17 @@ function trackTargetsBoneProperty(
         getBoneDisplayName(bone, -1),
     ].filter(Boolean));
     return boneNames.has(parsed.target) || track.name === getBoneTrackName(bone, property);
+}
+
+function trackTargetsBone(track: KeyframeTrack, bone: Bone): boolean {
+    const parsed = parseAnimationTrackName(track.name);
+    if (parsed.property !== 'position' && parsed.property !== 'quaternion' && parsed.property !== 'scale') return false;
+    const boneNames = new Set([
+        bone.name,
+        bone.uuid,
+        getBoneDisplayName(bone, -1),
+    ].filter(Boolean));
+    return boneNames.has(parsed.target) || track.name === getBoneTrackName(bone, parsed.property);
 }
 
 function getBonePropertyValue(
