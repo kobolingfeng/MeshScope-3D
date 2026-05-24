@@ -1789,6 +1789,15 @@ function setupAnimationControls(): void {
         viewer.selectBone(index);
     });
 
+    animBoneList.addEventListener('dblclick', (event) => {
+        const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-bone-index]');
+        if (!button) return;
+        const index = Number(button.dataset.boneIndex);
+        if (!Number.isFinite(index)) return;
+        viewer.selectBone(index);
+        if (viewer.frameSelectedBone()) syncPropertyPanelCamera();
+    });
+
     animModeRotate.addEventListener('click', () => {
         setBoneTransformMode('rotate');
     });
