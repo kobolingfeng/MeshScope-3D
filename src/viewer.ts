@@ -222,6 +222,7 @@ export type SkeletonEditorState = {
     transformSpace: BoneTransformSpace;
     ikEnabled: boolean;
     ikChainLength: number;
+    autoKeyframeEnabled: boolean;
     keyframes: AnimationTimelineMarker[];
 };
 
@@ -373,6 +374,7 @@ export class Viewer {
     private boneTransformSpace: BoneTransformSpace = 'local';
     private boneRotationStepRadians = DEFAULT_BONE_ROTATION_STEP_RADIANS;
     private boneTranslationStepRatio = DEFAULT_BONE_TRANSLATION_STEP_RATIO;
+    private autoKeyframeEnabled = true;
     private transformDragging = false;
     private transformChangedDuringDrag = false;
     private ikEnabled = false;
@@ -1243,6 +1245,7 @@ export class Viewer {
             transformSpace: this.boneTransformSpace,
             ikEnabled: this.ikEnabled,
             ikChainLength: this.ikChainMaxLength,
+            autoKeyframeEnabled: this.autoKeyframeEnabled,
             keyframes: includeKeyframes ? this.getTimelineMarkers() : [],
         };
     }
@@ -1324,8 +1327,15 @@ export class Viewer {
         }
     }
 
+    setAutoKeyframeEnabled(enabled: boolean): void {
+        this.autoKeyframeEnabled = enabled;
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+    }
+
     insertSelectedBoneKeyframe(): void {
-        this.autoKeyframeCurrentBonePose();
+        const clip = this.ensureActiveAnimationClip();
+        if (!clip || !this.selectedBone) return;
+        this.autoKeyframeBonePoseTargets(clip, [this.selectedBone]);
     }
 
     insertSelectedBoneChainKeyframe(): number {
@@ -1339,6 +1349,7 @@ export class Viewer {
     }
 
     autoKeyframeCurrentBonePose(): boolean {
+        if (!this.autoKeyframeEnabled) return false;
         const clip = this.ensureActiveAnimationClip();
         if (!clip || !this.selectedBone) return false;
 

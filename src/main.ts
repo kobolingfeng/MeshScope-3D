@@ -285,6 +285,7 @@ const animSpaceLocal = $<HTMLButtonElement>('anim-space-local');
 const animSpaceWorld = $<HTMLButtonElement>('anim-space-world');
 const animFkMode = $<HTMLButtonElement>('anim-fk-mode');
 const animIkMode = $<HTMLButtonElement>('anim-ik-mode');
+const animAutoKeyframeInput = $<HTMLInputElement>('anim-auto-keyframe');
 const animIkChainLengthInput = $<HTMLInputElement>('anim-ik-chain-length');
 const animRotationStepInput = $<HTMLInputElement>('anim-rotation-step');
 const animTranslationStepInput = $<HTMLInputElement>('anim-translation-step');
@@ -1490,6 +1491,11 @@ function setupAnimationControls(): void {
         setBoneSolverMode(true);
     });
 
+    animAutoKeyframeInput.addEventListener('change', () => {
+        viewer.setAutoKeyframeEnabled(animAutoKeyframeInput.checked);
+        syncAnimationEditor();
+    });
+
     animIkChainLengthInput.addEventListener('change', () => {
         const value = Number(animIkChainLengthInput.value);
         const length = Number.isFinite(value) ? clamp(value, 1, 12) : 4;
@@ -2198,6 +2204,8 @@ function renderSkeletonControls(state: SkeletonEditorState): void {
     animSpaceWorld.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animFkMode.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animIkMode.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    animAutoKeyframeInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    animAutoKeyframeInput.checked = state.autoKeyframeEnabled;
     animIkChainLengthInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !state.ikEnabled;
     animRotationStepInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animTranslationStepInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
