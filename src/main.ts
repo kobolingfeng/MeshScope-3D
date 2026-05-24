@@ -2220,6 +2220,7 @@ function updateTimelineSelectionSummary(
         ? `${count} 关键帧 · F${frame}`
         : `0 关键帧 · F${frame}`;
     const hasAnimations = state.hasAnimations && state.activeIndex >= 0;
+    btnTimelineSelectAll.disabled = !hasAnimations;
     btnTimelineClearSelection.disabled = count === 0;
     btnTimelineCopyKeys.disabled = count === 0;
     btnTimelinePasteKeys.disabled = !keyframeClipboard || !hasAnimations;
