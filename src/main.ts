@@ -1251,7 +1251,11 @@ function selectAdjacentTimelineKeyframe(direction: 1 | -1): boolean {
 
 function selectAdjacentBone(direction: 1 | -1): boolean {
     const state = viewer.getSkeletonEditorState({ includeKeyframes: false });
-    if (!state.hasSkeleton || state.selectedBoneIndex < 0) return false;
+    if (!state.hasSkeleton || state.bones.length === 0) return false;
+    if (state.selectedBoneIndex < 0) {
+        viewer.selectBone(direction > 0 ? 0 : state.bones.length - 1);
+        return true;
+    }
 
     const nextIndex = clamp(state.selectedBoneIndex + direction, 0, state.bones.length - 1);
     if (nextIndex === state.selectedBoneIndex) return true;
