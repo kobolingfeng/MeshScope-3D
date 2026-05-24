@@ -5111,8 +5111,8 @@ function runTextureEdit(label: string, apply: () => void): void {
 
 function runAnimationEdit(label: string, apply: () => void): void {
     flushBoneStepUndoTransaction();
-    const librarySnapshot = viewer.captureAnimationLibrarySnapshot();
     const snapshot = viewer.captureAnimationSnapshot();
+    const librarySnapshot = snapshot ? null : viewer.captureAnimationLibrarySnapshot();
     apply();
     const current = viewer.captureAnimationSnapshot();
     if (snapshot && current && !areAnimationSnapshotsEqual(snapshot, current)) {
@@ -5121,7 +5121,7 @@ function runAnimationEdit(label: string, apply: () => void): void {
             label,
             snapshot,
         });
-    } else {
+    } else if (librarySnapshot) {
         const currentLibrary = viewer.captureAnimationLibrarySnapshot();
         if (!areAnimationLibrarySnapshotsEqual(librarySnapshot, currentLibrary)) {
             pushUndoEntry({
@@ -5132,6 +5132,8 @@ function runAnimationEdit(label: string, apply: () => void): void {
         } else if (!snapshot && current) {
             markActiveDocumentDirty();
         }
+    } else if (!snapshot && current) {
+        markActiveDocumentDirty();
     }
     refreshAnimationBar(viewer.getAnimationState());
     syncAnimationEditor();
