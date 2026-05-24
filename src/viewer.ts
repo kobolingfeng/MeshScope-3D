@@ -522,6 +522,7 @@ export class Viewer {
             }
         });
         this.canvas.addEventListener('pointerdown', (event) => this.handleSkeletonPointerDown(event), true);
+        this.canvas.addEventListener('dblclick', (event) => this.handleSkeletonDoubleClick(event), true);
 
         this.resizeObserver = new ResizeObserver(() => this.resize());
         this.resizeObserver.observe(canvas.parentElement || canvas);
@@ -3006,9 +3007,29 @@ export class Viewer {
 
     private handleSkeletonPointerDown(event: PointerEvent): void {
         if (!this.skeletonVisible || this.transformDragging) return;
-        this.ensureSkeletonOverlay();
-        if (this.boneHandles.size === 0) return;
         if (event.button !== 0) return;
+        const bone = this.pickSkeletonBone(event);
+        if (!bone) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        this.selectBone(this.bones.indexOf(bone));
+    }
+
+    private handleSkeletonDoubleClick(event: MouseEvent): void {
+        if (!this.skeletonVisible || this.transformDragging) return;
+        const bone = this.pickSkeletonBone(event);
+        if (!bone) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        this.selectBone(this.bones.indexOf(bone));
+        this.frameSelectedBone();
+    }
+
+    private pickSkeletonBone(event: MouseEvent | PointerEvent): Bone | null {
+        this.ensureSkeletonOverlay();
+        if (this.boneLines.size === 0 && this.boneHighlightMeshes.size === 0) return null;
         const rect = this.canvas.getBoundingClientRect();
         this.pointerNdc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
         this.pointerNdc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -3016,13 +3037,10 @@ export class Viewer {
         this.raycaster.params.Line.threshold = Math.max(this.getBoneHandleScale() * 1.8, 0.05);
         const hits = this.raycaster.intersectObjects(this.getBoneLineObjects(), false);
         const hit = hits[0]?.object;
-        if (!hit) return;
+        if (!hit) return null;
 
         const bone = this.handleToBone.get(hit) ?? this.lineToBone.get(hit);
-        if (!bone) return;
-        event.preventDefault();
-        event.stopPropagation();
-        this.selectBone(this.bones.indexOf(bone));
+        return bone ?? null;
     }
 
     private getBoneLineObjects(): Object3D[] {
