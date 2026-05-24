@@ -287,6 +287,7 @@ const animBoneSearch = $<HTMLInputElement>('anim-bone-search');
 const animBoneList = $('anim-bone-list');
 const animSelectedBone = $('anim-selected-bone');
 const btnFrameSelectedBone = $<HTMLButtonElement>('btn-frame-selected-bone');
+const btnSelectMirrorBone = $<HTMLButtonElement>('btn-select-mirror-bone');
 const animModeTranslate = $<HTMLButtonElement>('anim-mode-translate');
 const animModeRotate = $<HTMLButtonElement>('anim-mode-rotate');
 const animSpaceLocal = $<HTMLButtonElement>('anim-space-local');
@@ -1296,6 +1297,14 @@ function setupKeyboardShortcuts(): void {
             return;
         }
 
+        if (event.altKey && !event.shiftKey && !event.ctrlKey && !event.metaKey && lowerKey === 'm') {
+            if (viewer.getSelectedBoneLocalTrs()) {
+                event.preventDefault();
+                selectMirroredBone();
+            }
+            return;
+        }
+
         if (!noMods) return;
 
         const state = viewer.getAnimationState();
@@ -1778,6 +1787,10 @@ function setupAnimationControls(): void {
         }
     });
 
+    btnSelectMirrorBone.addEventListener('click', () => {
+        selectMirroredBone();
+    });
+
     btnDeleteKeyframe.addEventListener('click', () => {
         if (selectedKeyframeTimes.length > 0) {
             const count = selectedKeyframeTimes.length;
@@ -2242,6 +2255,20 @@ function mirrorSelectedBonePose(): void {
     showToast(`已镜像 ${result.sourceName} -> ${result.targetName}`, 'success');
 }
 
+function selectMirroredBone(): void {
+    if (!viewer.getSelectedBoneLocalTrs()) {
+        showToast('请先选中一个骨骼', 'info');
+        return;
+    }
+    const result = viewer.selectMirroredBone();
+    if (!result) {
+        showToast('没找到对称骨骼', 'info');
+        return;
+    }
+    syncAnimationEditor();
+    showToast(`已选择 ${result.targetName}`, 'success');
+}
+
 async function mirrorActiveAnimationClip(): Promise<void> {
     const state = viewer.getAnimationState();
     if (!state.hasAnimations || state.activeIndex < 0) {
@@ -2556,6 +2583,7 @@ function renderSkeletonControls(
     btnMirrorBoneChainPose.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animSelectedBone.textContent = state.selectedBoneName || '—';
     btnFrameSelectedBone.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    btnSelectMirrorBone.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     syncBoneSolverModeButtons(state.ikEnabled);
     syncTransformModeButtons(state.transformMode);
     syncTransformSpaceButtons(state.transformSpace);

@@ -1349,6 +1349,19 @@ export class Viewer {
         return true;
     }
 
+    selectMirroredBone(): { sourceName: string; targetName: string } | null {
+        const source = this.selectedBone;
+        if (!source) return null;
+        const targetName = findMirroredBoneName(source.name, new Set(this.bones.map((bone) => bone.name)));
+        if (!targetName) return null;
+        const target = this.bones.find((bone) => bone.name === targetName);
+        if (!target) return null;
+        const sourceName = getBoneDisplayName(source, this.bones.indexOf(source));
+        const displayTargetName = getBoneDisplayName(target, this.bones.indexOf(target));
+        this.selectBone(this.bones.indexOf(target));
+        return { sourceName, targetName: displayTargetName };
+    }
+
     setBoneTransformMode(mode: BoneTransformMode): void {
         this.boneTransformMode = mode;
         if (!this.ikEnabled) this.transformControls.setMode(mode);
