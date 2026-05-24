@@ -12,6 +12,7 @@ import {
     Box3,
     Clock,
     Color,
+    CylinderGeometry,
     DoubleSide,
     DirectionalLight,
     Euler,
@@ -50,6 +51,7 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 
 const DEFAULT_BONE_ROTATION_STEP_RADIANS = Math.PI / 90;
 const DEFAULT_BONE_TRANSLATION_STEP_RATIO = 0.005;
+const BONE_HIGHLIGHT_AXIS = new Vector3(0, 1, 0);
 
 export type MaterialEditMode = 'original' | 'solid' | 'xray';
 export type TextureSlotId =
@@ -344,6 +346,28 @@ export class Viewer {
         opacity: 0,
         depthWrite: false,
     });
+    private boneHighlightGeometry = new CylinderGeometry(1, 1, 1, 8, 1, true);
+    private selectedBoneHighlightMaterial = new MeshBasicMaterial({
+        color: 0xff2a6d,
+        depthTest: false,
+        transparent: true,
+        opacity: 0.88,
+        depthWrite: false,
+    });
+    private fkChildHighlightMaterial = new MeshBasicMaterial({
+        color: 0xffb000,
+        depthTest: false,
+        transparent: true,
+        opacity: 0.72,
+        depthWrite: false,
+    });
+    private ikChainHighlightMaterial = new MeshBasicMaterial({
+        color: 0x22c55e,
+        depthTest: false,
+        transparent: true,
+        opacity: 0.78,
+        depthWrite: false,
+    });
     private boneLineMaterial = new LineBasicMaterial({
         color: 0x1378d1,
         depthTest: false,
@@ -378,8 +402,11 @@ export class Viewer {
         transparent: true,
         opacity: 0.95,
     });
+    private boneHighlightMeshes = new Map<Bone, Mesh[]>();
     private raycaster = new Raycaster();
     private pointerNdc = new Vector2();
+    private boneHighlightDirection = new Vector3();
+    private boneHighlightMidpoint = new Vector3();
     private transformControls: TransformControls;
     private boneTransformMode: BoneTransformMode = 'rotate';
     private boneTransformSpace: BoneTransformSpace = 'local';
@@ -1226,8 +1253,12 @@ export class Viewer {
         disposeMaterialSet(this.grid.material);
         this.axes.dispose();
         this.boneHandleGeometry.dispose();
+        this.boneHighlightGeometry.dispose();
         this.boneHandleMaterial.dispose();
         this.selectedBoneHandleMaterial.dispose();
+        this.selectedBoneHighlightMaterial.dispose();
+        this.fkChildHighlightMaterial.dispose();
+        this.ikChainHighlightMaterial.dispose();
         this.boneLineMaterial.dispose();
         this.selectedBoneLineMaterial.dispose();
         this.fkChildLineMaterial.dispose();
@@ -2771,7 +2802,9 @@ export class Viewer {
             const segmentCount = getBoneSegmentCount(bone);
             if (segmentCount > 0) {
                 const lines: Line[] = [];
+                const highlights: Mesh[] = [];
                 this.boneLines.set(bone, lines);
+                this.boneHighlightMeshes.set(bone, highlights);
                 for (let index = 0; index < segmentCount; index += 1) {
                     const segmentLine = new Line(
                         new BufferGeometry().setFromPoints([new Vector3(), new Vector3()]),
@@ -2784,6 +2817,15 @@ export class Viewer {
                     lines.push(segmentLine);
                     this.lineToBone.set(segmentLine, bone);
                     this.scene.add(segmentLine);
+
+                    const highlight = new Mesh(this.boneHighlightGeometry, this.selectedBoneHighlightMaterial);
+                    highlight.name = `__bone_highlight__${bone.name}_${index}`;
+                    highlight.renderOrder = 19;
+                    highlight.visible = false;
+                    highlight.userData.__boneLine = true;
+                    highlights.push(highlight);
+                    this.lineToBone.set(highlight, bone);
+                    this.scene.add(highlight);
                 }
             }
         }
@@ -2806,8 +2848,14 @@ export class Viewer {
                 line.geometry.dispose();
             }
         }
+        for (const highlights of this.boneHighlightMeshes.values()) {
+            for (const highlight of highlights) {
+                this.scene.remove(highlight);
+            }
+        }
         this.boneHandles.clear();
         this.boneLines.clear();
+        this.boneHighlightMeshes.clear();
     }
 
     private updateSkeletonOverlay(): void {
@@ -2830,6 +2878,8 @@ export class Viewer {
 
             const lines = this.boneLines.get(bone);
             if (!lines || lines.length === 0) continue;
+            const highlights = this.boneHighlightMeshes.get(bone);
+            const highlightMaterial = this.getBoneHighlightMaterial(bone);
             const children = getBoneChildren(bone);
             bone.getWorldPosition(start);
             for (let index = 0; index < lines.length; index += 1) {
@@ -2844,6 +2894,14 @@ export class Viewer {
                 line.geometry.computeBoundingSphere();
                 line.material = this.getBoneLineMaterial(bone);
                 line.visible = this.skeletonVisible;
+
+                const highlight = highlights?.[index];
+                if (highlight && highlightMaterial && this.skeletonVisible) {
+                    const radius = this.getBoneHighlightRadius(bone, scale);
+                    this.updateBoneHighlightSegment(highlight, start, end, radius, highlightMaterial);
+                } else if (highlight) {
+                    highlight.visible = false;
+                }
             }
         }
         if (this.ikTarget && this.ikTargetMesh) {
@@ -2851,6 +2909,34 @@ export class Viewer {
             this.ikTargetMesh.scale.setScalar(scale * 1.8);
             this.ikTargetMesh.visible = this.ikEnabled && this.transformControlsVisible;
         }
+    }
+
+    private updateBoneHighlightSegment(
+        mesh: Mesh,
+        start: Vector3,
+        end: Vector3,
+        radius: number,
+        material: MeshBasicMaterial,
+    ): void {
+        this.boneHighlightDirection.copy(end).sub(start);
+        const length = this.boneHighlightDirection.length();
+        if (length < 0.000001) {
+            mesh.visible = false;
+            return;
+        }
+
+        this.boneHighlightDirection.multiplyScalar(1 / length);
+        this.boneHighlightMidpoint.copy(start).add(end).multiplyScalar(0.5);
+        mesh.position.copy(this.boneHighlightMidpoint);
+        mesh.quaternion.setFromUnitVectors(BONE_HIGHLIGHT_AXIS, this.boneHighlightDirection);
+        mesh.scale.set(radius, length, radius);
+        mesh.material = material;
+        mesh.visible = true;
+    }
+
+    private getBoneHighlightRadius(bone: Bone, scale: number): number {
+        if (bone === this.selectedBone) return Math.max(scale * 0.16, 0.004);
+        return Math.max(scale * 0.1, 0.003);
     }
 
     private shouldUpdateSkeletonOverlay(): boolean {
@@ -2889,9 +2975,14 @@ export class Viewer {
         this.selectBone(this.bones.indexOf(bone));
     }
 
-    private getBoneLineObjects(): Line[] {
-        const lines: Line[] = [];
+    private getBoneLineObjects(): Object3D[] {
+        const lines: Object3D[] = [];
         for (const boneLines of this.boneLines.values()) lines.push(...boneLines);
+        for (const highlights of this.boneHighlightMeshes.values()) {
+            for (const highlight of highlights) {
+                if (highlight.visible) lines.push(highlight);
+            }
+        }
         return lines;
     }
 
@@ -2914,6 +3005,13 @@ export class Viewer {
         if (this.ikEnabled && this.ikChain.includes(bone)) return this.ikChainLineMaterial;
         if (!this.ikEnabled && this.isSelectedBoneDescendant(bone)) return this.fkChildLineMaterial;
         return this.boneLineMaterial;
+    }
+
+    private getBoneHighlightMaterial(bone: Bone): MeshBasicMaterial | null {
+        if (bone === this.selectedBone) return this.selectedBoneHighlightMaterial;
+        if (this.ikEnabled && this.ikChain.includes(bone)) return this.ikChainHighlightMaterial;
+        if (!this.ikEnabled && this.isSelectedBoneDescendant(bone)) return this.fkChildHighlightMaterial;
+        return null;
     }
 
     private attachTransformTarget(): void {
