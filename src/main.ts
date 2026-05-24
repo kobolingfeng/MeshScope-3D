@@ -134,6 +134,7 @@ type LayoutState = {
 
 const LAYOUT_KEY = 'portable-3d-viewer.layout.v9';
 const MAX_UNDO_STEPS = 80;
+const BONE_STEP_UNDO_IDLE_MS = 420;
 const INSPECTOR_MIN_WIDTH = 280;
 const LEFT_SIDEBAR_MIN_WIDTH = 220;
 const DEFAULT_LAYOUT: LayoutState = {
@@ -404,6 +405,8 @@ let timelineSnapEnabled = true;
 let timelineSelectedBoneOnly = false;
 let timelineFps = 30;
 let timelineRetimePreviewDelta = 0;
+let boneStepUndoTimer = 0;
+let boneStepUndoOpen = false;
 let statsRefreshRaf = 0;
 let animationEasingCurve: AnimationEasingCurve = [...ANIMATION_EASING_CURVES['ease-in-out']];
 let animationEasingDragHandle: 1 | 2 | null = null;
@@ -1556,6 +1559,11 @@ function setupKeyboardShortcuts(): void {
             return;
         }
     });
+
+    window.addEventListener('keyup', (event) => {
+        if (isBoneStepShortcutKey(event.key)) flushBoneStepUndoTransaction();
+    });
+    window.addEventListener('blur', () => flushBoneStepUndoTransaction());
 }
 
 function selectAdjacentTimelineKeyframe(direction: 1 | -1): boolean {
@@ -1617,11 +1625,40 @@ function selectAdjacentBone(direction: 1 | -1): boolean {
     return true;
 }
 
+function isBoneStepShortcutKey(key: string): boolean {
+    return ['u', 'i', 'o', 'j', 'k', 'l'].includes(key.toLowerCase());
+}
+
 function stepSelectedBoneTransform(axis: 'x' | 'y' | 'z', direction: 1 | -1): void {
-    beginBonePoseUndoTransaction();
+    if (!boneStepUndoOpen) {
+        beginBonePoseUndoTransaction();
+        boneStepUndoOpen = true;
+    }
     const changed = viewer.stepSelectedBoneTransform(axis, direction);
+    if (!changed) {
+        flushBoneStepUndoTransaction();
+        return;
+    }
+    scheduleBoneStepUndoCommit();
+    syncAnimationEditor();
+}
+
+function scheduleBoneStepUndoCommit(): void {
+    if (boneStepUndoTimer) window.clearTimeout(boneStepUndoTimer);
+    boneStepUndoTimer = window.setTimeout(() => {
+        boneStepUndoTimer = 0;
+        flushBoneStepUndoTransaction();
+    }, BONE_STEP_UNDO_IDLE_MS);
+}
+
+function flushBoneStepUndoTransaction(): void {
+    if (boneStepUndoTimer) {
+        window.clearTimeout(boneStepUndoTimer);
+        boneStepUndoTimer = 0;
+    }
+    if (!boneStepUndoOpen) return;
+    boneStepUndoOpen = false;
     commitBonePoseUndoTransaction();
-    if (!changed) return;
     syncAnimationEditor();
 }
 
@@ -4690,6 +4727,7 @@ function flushPendingUndoTransactions(): void {
     commitMaterialUndoTransaction();
     commitTextureUndoTransaction();
     commitUvWheelUndoTransaction();
+    flushBoneStepUndoTransaction();
     commitBonePoseUndoTransaction();
     refreshButtons();
 }
@@ -4763,6 +4801,7 @@ function runTextureEdit(label: string, apply: () => void): void {
 }
 
 function runAnimationEdit(label: string, apply: () => void): void {
+    flushBoneStepUndoTransaction();
     const librarySnapshot = viewer.captureAnimationLibrarySnapshot();
     const snapshot = viewer.captureAnimationSnapshot();
     apply();
@@ -4790,6 +4829,7 @@ function runAnimationEdit(label: string, apply: () => void): void {
 }
 
 function runAnimationLibraryEdit(label: string, apply: () => void): void {
+    flushBoneStepUndoTransaction();
     const snapshot = viewer.captureAnimationLibrarySnapshot();
     apply();
     const current = viewer.captureAnimationLibrarySnapshot();
