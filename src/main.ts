@@ -2862,7 +2862,8 @@ function syncAnimationEditor(): void {
     animEditorEmpty.hidden = true;
     animEditor.hidden = false;
     renderSkeletonControls(skeletonState);
-    animClipNameInput.value = state.clipName || 'Pose Action';
+    animClipNameInput.disabled = state.activeIndex < 0;
+    animClipNameInput.value = state.activeIndex >= 0 ? (state.clipName || 'Pose Action') : '未选择动画';
     animClipDuration.textContent = state.duration > 0 ? `${state.duration.toFixed(2)}s` : '—';
     animTrackCount.textContent = String(state.tracks.length);
     renderAnimationTimeline(skeletonState, viewer.getAnimationState());
