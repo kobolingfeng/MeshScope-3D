@@ -347,6 +347,13 @@ export class Viewer {
         opacity: 0.95,
         linewidth: 5,
     });
+    private ikChainLineMaterial = new LineBasicMaterial({
+        color: 0x22c55e,
+        depthTest: false,
+        transparent: true,
+        opacity: 0.98,
+        linewidth: 5,
+    });
     private ikTargetMaterial = new MeshBasicMaterial({
         color: 0x2fb37a,
         depthTest: false,
@@ -1165,6 +1172,7 @@ export class Viewer {
         this.boneLineMaterial.dispose();
         this.selectedBoneLineMaterial.dispose();
         this.fkChildLineMaterial.dispose();
+        this.ikChainLineMaterial.dispose();
         this.ikTargetMaterial.dispose();
         this.transformControls.dispose();
         this.controls.dispose();
@@ -2219,11 +2227,7 @@ export class Viewer {
             positions.setXYZ(1, end.x, end.y, end.z);
             positions.needsUpdate = true;
             line.geometry.computeBoundingSphere();
-            line.material = bone === this.selectedBone
-                ? this.selectedBoneLineMaterial
-                : this.isSelectedBoneDescendant(bone)
-                    ? this.fkChildLineMaterial
-                : this.boneLineMaterial;
+            line.material = this.getBoneLineMaterial(bone);
             line.visible = this.skeletonVisible;
         }
         if (this.ikTarget && this.ikTargetMesh) {
@@ -2277,6 +2281,13 @@ export class Viewer {
             current = current.parent;
         }
         return false;
+    }
+
+    private getBoneLineMaterial(bone: Bone): LineBasicMaterial {
+        if (bone === this.selectedBone) return this.selectedBoneLineMaterial;
+        if (this.ikEnabled && this.ikChain.includes(bone)) return this.ikChainLineMaterial;
+        if (!this.ikEnabled && this.isSelectedBoneDescendant(bone)) return this.fkChildLineMaterial;
+        return this.boneLineMaterial;
     }
 
     private attachTransformTarget(): void {
