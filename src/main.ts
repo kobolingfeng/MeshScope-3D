@@ -2312,8 +2312,11 @@ function refreshAnimationBar(state: AnimationPlaybackState): void {
 
     animBar.hidden = false;
     leftSidebar.classList.remove('is-empty');
-    leftSidebarMeta.textContent = state.clips.length > 1
+    const activeClipMeta = state.activeIndex >= 0
         ? `${state.activeIndex + 1} / ${state.clips.length}`
+        : `未选择 / ${state.clips.length}`;
+    leftSidebarMeta.textContent = state.clips.length > 1 || state.activeIndex < 0
+        ? activeClipMeta
         : `${state.clips.length}`;
     renderAnimationClipList(state);
 
@@ -2326,9 +2329,11 @@ function refreshAnimationBar(state: AnimationPlaybackState): void {
         animSpeedInput.value = String(state.speed);
     }
 
-    animSummary.textContent = state.clips.length > 1
-        ? `${state.activeIndex + 1} / ${state.clips.length}`
-        : '';
+    animSummary.textContent = state.activeIndex < 0
+        ? '未选择动画'
+        : state.clips.length > 1
+            ? activeClipMeta
+            : '';
 
     syncAnimationClipTools(state);
     syncAnimationProgress(state);
