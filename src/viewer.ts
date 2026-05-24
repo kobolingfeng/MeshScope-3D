@@ -1417,6 +1417,7 @@ export class Viewer {
         clip.duration = Math.max(clip.duration, time, 0.001);
         this.refreshAnimationClipMetas();
         this.refreshActiveAnimationAfterEdit(this.activeClipIndex);
+        this.seekAnimation(time);
         this.onSkeletonChanged(this.getSkeletonEditorState());
         return true;
     }
