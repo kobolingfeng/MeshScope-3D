@@ -1397,7 +1397,8 @@ function setupKeyboardShortcuts(): void {
         }
 
         const shiftFrameStep = event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && (key === '[' || key === ']');
-        if (!noMods && !shiftFrameStep) return;
+        const timelineZoomStep = !event.ctrlKey && !event.metaKey && !event.altKey && (key === '=' || key === '+' || key === '-');
+        if (!noMods && !shiftFrameStep && !timelineZoomStep) return;
 
         const state = viewer.getAnimationState();
 
@@ -1415,6 +1416,18 @@ function setupKeyboardShortcuts(): void {
             const frames = event.shiftKey ? 10 : 1;
             const nextTime = clamp(state.time + direction * frames / timelineFps, 0, state.duration);
             viewer.seekAnimation(snapTimelineTimeToFrame(nextTime, state.duration));
+            return;
+        }
+
+        if ((key === '=' || key === '+') && state.hasAnimations) {
+            event.preventDefault();
+            zoomTimelineAroundPlayhead(1.25);
+            return;
+        }
+
+        if (key === '-' && state.hasAnimations) {
+            event.preventDefault();
+            zoomTimelineAroundPlayhead(0.8);
             return;
         }
 
@@ -2081,8 +2094,7 @@ function setupAnimationControls(): void {
 
     animTimelineZoomInput.addEventListener('input', () => {
         const value = Number(animTimelineZoomInput.value);
-        timelineZoom = Number.isFinite(value) ? clamp(value, 0.25, 12) : 1;
-        renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+        setTimelineZoom(Number.isFinite(value) ? value : 1);
     });
 
     animTimelineScroll.addEventListener('wheel', handleTimelineWheel, { passive: false });
@@ -3220,14 +3232,10 @@ function handleTimelineWheel(event: WheelEvent): void {
         const anchorRatio = oldWidth > 0
             ? clamp((animTimelineScroll.scrollLeft + anchor) / oldWidth, 0, 1)
             : 0;
-        const nextZoom = clamp(timelineZoom * Math.exp(-event.deltaY * 0.0015), 0.25, 12);
-        if (nearlyEqual(nextZoom, timelineZoom)) return;
-        timelineZoom = nextZoom;
-        animTimelineZoomInput.value = String(Number(timelineZoom.toFixed(2)));
-        renderAnimationTimeline(viewer.getSkeletonEditorState(), state);
-        requestAnimationFrame(() => {
-            const nextWidth = getTimelineContentWidth(state.duration);
-            animTimelineScroll.scrollLeft = Math.max(0, nextWidth * anchorRatio - anchor);
+        setTimelineZoom(timelineZoom * Math.exp(-event.deltaY * 0.0015), {
+            anchorPx: anchor,
+            anchorRatio,
+            state,
         });
         return;
     }
@@ -3235,6 +3243,34 @@ function handleTimelineWheel(event: WheelEvent): void {
     if (event.shiftKey && Math.abs(event.deltaY) > Math.abs(event.deltaX)) {
         event.preventDefault();
         animTimelineScroll.scrollLeft += event.deltaY;
+    }
+}
+
+function zoomTimelineAroundPlayhead(factor: number): void {
+    const state = viewer.getAnimationState();
+    if (!state.hasAnimations || state.duration <= 0) return;
+    setTimelineZoom(timelineZoom * factor, {
+        anchorPx: animTimelineScroll.clientWidth * 0.5,
+        anchorRatio: clamp(state.time / state.duration, 0, 1),
+        state,
+    });
+}
+
+function setTimelineZoom(
+    value: number,
+    options: { anchorPx?: number; anchorRatio?: number; state?: AnimationPlaybackState } = {},
+): void {
+    const nextZoom = clamp(value, 0.25, 12);
+    if (nearlyEqual(nextZoom, timelineZoom)) return;
+    timelineZoom = nextZoom;
+    animTimelineZoomInput.value = String(Number(timelineZoom.toFixed(2)));
+    const state = options.state ?? viewer.getAnimationState();
+    renderAnimationTimeline(viewer.getSkeletonEditorState(), state);
+    if (typeof options.anchorPx === 'number' && typeof options.anchorRatio === 'number') {
+        requestAnimationFrame(() => {
+            const nextWidth = getTimelineContentWidth(state.duration);
+            animTimelineScroll.scrollLeft = Math.max(0, nextWidth * options.anchorRatio! - options.anchorPx!);
+        });
     }
 }
 
