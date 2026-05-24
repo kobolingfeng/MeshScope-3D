@@ -2201,6 +2201,31 @@ export class Viewer {
         const bone = this.selectedBone;
         if (!bone) return false;
 
+        if (this.ikEnabled) {
+            this.ensureIkTarget();
+            if (!this.ikTarget) return false;
+            const bounds = this.getModelBounds();
+            const maxDim = bounds ? Math.max(bounds.size.x, bounds.size.y, bounds.size.z) : 1;
+            const step = Math.max(maxDim * this.boneTranslationStepRatio, 0.001);
+            const axisVector = new Vector3(
+                axis === 'x' ? 1 : 0,
+                axis === 'y' ? 1 : 0,
+                axis === 'z' ? 1 : 0,
+            );
+            if (this.boneTransformSpace === 'local') {
+                const worldQuaternion = new Quaternion();
+                bone.getWorldQuaternion(worldQuaternion);
+                axisVector.applyQuaternion(worldQuaternion).normalize();
+            }
+            this.ikTarget.position.addScaledVector(axisVector, step * direction);
+            this.solveIk();
+            this.refreshEditedBoneHierarchies([bone, ...this.ikChain]);
+            this.updateSkeletonOverlay();
+            this.autoKeyframeCurrentBonePose();
+            this.onSkeletonChanged(this.getSkeletonEditorState());
+            return true;
+        }
+
         if (this.boneTransformMode === 'translate') {
             const bounds = this.getModelBounds();
             const maxDim = bounds ? Math.max(bounds.size.x, bounds.size.y, bounds.size.z) : 1;
