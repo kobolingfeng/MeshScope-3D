@@ -1347,8 +1347,17 @@ export class Viewer {
     }
 
     moveSelectedBoneKeyframesAtTimes(fromTimes: number[], toTimes: number[]): void {
+        if (!this.selectedBone) return;
+        this.moveKeyframesAtTimesInternal(fromTimes, toTimes, this.selectedBone);
+    }
+
+    moveKeyframesAtTimes(fromTimes: number[], toTimes: number[]): void {
+        this.moveKeyframesAtTimesInternal(fromTimes, toTimes, null);
+    }
+
+    private moveKeyframesAtTimesInternal(fromTimes: number[], toTimes: number[], bone: Bone | null): void {
         const clip = this.animClips[this.activeClipIndex];
-        if (!clip || !this.selectedBone || fromTimes.length === 0 || toTimes.length === 0) return;
+        if (!clip || fromTimes.length === 0 || toTimes.length === 0) return;
 
         const moves = fromTimes
             .map((from, index) => ({ from, to: toTimes[index] ?? from }))
@@ -1357,7 +1366,7 @@ export class Viewer {
 
         let changed = false;
         clip.tracks = clip.tracks.map((track) => {
-            const nextTrack = moveKeyframesNearTimes(track, this.selectedBone!, moves);
+            const nextTrack = moveKeyframesNearTimes(track, bone, moves);
             if (nextTrack !== track) changed = true;
             return nextTrack;
         });
@@ -2639,14 +2648,17 @@ function removeKeyframeNearTime(track: KeyframeTrack, bone: Bone, time: number):
 
 function moveKeyframesNearTimes(
     track: KeyframeTrack,
-    bone: Bone,
+    bone: Bone | null,
     moves: Array<{ from: number; to: number }>,
 ): KeyframeTrack {
-    const property = parseAnimationTrackName(track.name).property;
-    if (property !== 'position' && property !== 'quaternion' && property !== 'scale') return track;
-    if (!trackTargetsBoneProperty(track, bone, property)) return track;
+    if (bone) {
+        const property = parseAnimationTrackName(track.name).property;
+        if (property !== 'position' && property !== 'quaternion' && property !== 'scale') return track;
+        if (!trackTargetsBoneProperty(track, bone, property)) return track;
+    }
 
     const valueSize = track.getValueSize();
+    if (valueSize <= 0) return track;
     const trackValues = Array.from(track.values as ArrayLike<number>);
     const rows = Array.from(track.times as ArrayLike<number>).map((time, index) => ({
         time,

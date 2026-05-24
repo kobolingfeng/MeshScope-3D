@@ -2279,7 +2279,7 @@ function handleTimelinePointerUp(event: PointerEvent): void {
             const delta = rawEnd - rawStart;
             const targetTimes = startTimes.map((time) => snapTimelineTime(time + delta, duration));
             runAnimationEdit('移动关键帧', () => {
-                viewer.moveSelectedBoneKeyframesAtTimes(startTimes, targetTimes);
+                viewer.moveKeyframesAtTimes(startTimes, targetTimes);
             });
             setSelectedKeyframeTimes(targetTimes);
             if (selectedKeyframeTimes.length > 0) viewer.seekAnimation(selectedKeyframeTimes[0]);
