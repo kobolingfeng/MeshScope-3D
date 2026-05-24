@@ -282,6 +282,8 @@ const animModeRotate = $<HTMLButtonElement>('anim-mode-rotate');
 const animFkMode = $<HTMLButtonElement>('anim-fk-mode');
 const animIkMode = $<HTMLButtonElement>('anim-ik-mode');
 const animIkChainLengthInput = $<HTMLInputElement>('anim-ik-chain-length');
+const animRotationStepInput = $<HTMLInputElement>('anim-rotation-step');
+const animTranslationStepInput = $<HTMLInputElement>('anim-translation-step');
 const animKeyframeStrip = $('anim-keyframe-strip');
 const btnInsertKeyframe = $<HTMLButtonElement>('btn-insert-keyframe');
 const btnDeleteKeyframe = $<HTMLButtonElement>('btn-delete-keyframe');
@@ -1427,6 +1429,17 @@ function setupAnimationControls(): void {
         syncAnimationEditor();
     });
 
+    const applyBoneStepSettings = () => {
+        const rotationDegrees = Number(animRotationStepInput.value);
+        const translationPercent = Number(animTranslationStepInput.value);
+        viewer.setBoneStepSettings({
+            rotationDegrees: Number.isFinite(rotationDegrees) ? rotationDegrees : undefined,
+            translationPercent: Number.isFinite(translationPercent) ? translationPercent : undefined,
+        });
+    };
+    animRotationStepInput.addEventListener('change', applyBoneStepSettings);
+    animTranslationStepInput.addEventListener('change', applyBoneStepSettings);
+
     btnInsertKeyframe.addEventListener('click', () => {
         runAnimationEdit('插入关键帧', () => {
             viewer.insertSelectedBoneKeyframe();
@@ -2078,6 +2091,8 @@ function renderSkeletonControls(state: SkeletonEditorState): void {
     animFkMode.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animIkMode.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animIkChainLengthInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !state.ikEnabled;
+    animRotationStepInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    animTranslationStepInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     if (Number(animIkChainLengthInput.value) !== state.ikChainLength) {
         animIkChainLengthInput.value = String(state.ikChainLength);
     }

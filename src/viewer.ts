@@ -48,8 +48,8 @@ import type { KeyframeTrack } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 
-const BONE_ROTATION_STEP_RADIANS = Math.PI / 90;
-const BONE_TRANSLATION_STEP_RATIO = 0.005;
+const DEFAULT_BONE_ROTATION_STEP_RADIANS = Math.PI / 90;
+const DEFAULT_BONE_TRANSLATION_STEP_RATIO = 0.005;
 
 export type MaterialEditMode = 'original' | 'solid' | 'xray';
 export type TextureSlotId =
@@ -367,6 +367,8 @@ export class Viewer {
     private pointerNdc = new Vector2();
     private transformControls: TransformControls;
     private boneTransformMode: BoneTransformMode = 'rotate';
+    private boneRotationStepRadians = DEFAULT_BONE_ROTATION_STEP_RADIANS;
+    private boneTranslationStepRatio = DEFAULT_BONE_TRANSLATION_STEP_RATIO;
     private transformDragging = false;
     private transformChangedDuringDrag = false;
     private ikEnabled = false;
@@ -1299,6 +1301,17 @@ export class Viewer {
         this.onSkeletonChanged(this.getSkeletonEditorState());
     }
 
+    setBoneStepSettings(settings: { rotationDegrees?: number; translationPercent?: number }): void {
+        if (typeof settings.rotationDegrees === 'number' && Number.isFinite(settings.rotationDegrees)) {
+            const degrees = Math.max(0.1, Math.min(45, settings.rotationDegrees));
+            this.boneRotationStepRadians = degrees * Math.PI / 180;
+        }
+        if (typeof settings.translationPercent === 'number' && Number.isFinite(settings.translationPercent)) {
+            const percent = Math.max(0.01, Math.min(10, settings.translationPercent));
+            this.boneTranslationStepRatio = percent / 100;
+        }
+    }
+
     insertSelectedBoneKeyframe(): void {
         this.autoKeyframeCurrentBonePose();
     }
@@ -1749,11 +1762,11 @@ export class Viewer {
         if (this.boneTransformMode === 'translate') {
             const bounds = this.getModelBounds();
             const maxDim = bounds ? Math.max(bounds.size.x, bounds.size.y, bounds.size.z) : 1;
-            const step = Math.max(maxDim * BONE_TRANSLATION_STEP_RATIO, 0.001);
+            const step = Math.max(maxDim * this.boneTranslationStepRatio, 0.001);
             bone.position[axis] += step * direction;
         } else {
             const euler = new Euler().setFromQuaternion(bone.quaternion, 'XYZ');
-            euler[axis] += BONE_ROTATION_STEP_RADIANS * direction;
+            euler[axis] += this.boneRotationStepRadians * direction;
             bone.quaternion.setFromEuler(euler);
         }
 
