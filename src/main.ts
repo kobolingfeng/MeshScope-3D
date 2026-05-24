@@ -1232,22 +1232,27 @@ function stepSelectedBoneTransform(axis: 'x' | 'y' | 'z', direction: 1 | -1): vo
 
 // ----- Status chips ----------------------------------------------------------
 
-function updateStatusChips(): void {
+function updateStatusFrameChip(animState = viewer.getAnimationState()): void {
+    if (!statusFrame || !statusFrameValue) return;
+    if (animState.hasAnimations) {
+        statusFrame.hidden = false;
+        const currentFrame = Math.round(animState.time * timelineFps);
+        const totalFrame = Math.round(animState.duration * timelineFps);
+        statusFrameValue.textContent = `${currentFrame} / ${totalFrame}`;
+    } else {
+        statusFrame.hidden = true;
+    }
+}
+
+function updateStatusChips(
+    animState = viewer.getAnimationState(),
+    skel = viewer.getSkeletonEditorState({ includeKeyframes: false }),
+): void {
     if (!statusFrame || !statusFrameValue || !statusBone || !statusBoneValue || !statusKeys || !statusKeysValue) {
         return;
     }
     try {
-        const animState = viewer.getAnimationState();
-        const skel = viewer.getSkeletonEditorState({ includeKeyframes: false });
-
-        if (animState.hasAnimations) {
-            statusFrame.hidden = false;
-            const currentFrame = Math.round(animState.time * timelineFps);
-            const totalFrame = Math.round(animState.duration * timelineFps);
-            statusFrameValue.textContent = `${currentFrame} / ${totalFrame}`;
-        } else {
-            statusFrame.hidden = true;
-        }
+        updateStatusFrameChip(animState);
 
         if (skel.hasSkeleton && skel.selectedBoneName) {
             statusBone.hidden = false;
@@ -2113,13 +2118,17 @@ function renderAnimationTimelineNow(
 function updateTimelinePlayhead(state: AnimationPlaybackState): void {
     const playhead = state.duration > 0 ? clamp((state.time / state.duration) * 100, 0, 100) : 0;
     animKeyframeStrip.style.setProperty('--playhead', `${playhead}%`);
-    updateTimelineSelectionSummary();
+    updateTimelineSelectionSummary(state, { updateStatus: false });
+    updateStatusFrameChip(state);
 }
 
-function updateTimelineSelectionSummary(): void {
+function updateTimelineSelectionSummary(
+    state = viewer.getAnimationState(),
+    options: { updateStatus?: boolean } = {},
+): void {
     const count = selectedKeyframeTimes.length;
-    const frame = viewer.getAnimationState().duration > 0
-        ? Math.round((viewer.getAnimationState().time ?? 0) * timelineFps)
+    const frame = state.duration > 0
+        ? Math.round((state.time ?? 0) * timelineFps)
         : 0;
     animKeyframeSelection.textContent = count > 0
         ? `${count} 关键帧 · F${frame}`
@@ -2127,7 +2136,7 @@ function updateTimelineSelectionSummary(): void {
     btnTimelineClearSelection.disabled = count === 0;
     btnDeleteKeyframe.textContent = count > 0 ? `删除选中 ${count}` : '删除当前帧';
     animTimelineZoomLabel.textContent = `${Math.round(timelineZoom * 100)}%`;
-    updateStatusChips();
+    if (options.updateStatus ?? true) updateStatusChips(state);
 }
 
 function getTimelineContentWidth(duration: number): number {
