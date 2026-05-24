@@ -1540,9 +1540,23 @@ export class Viewer {
         if (targets.length === 0) return false;
         const time = this.getCurrentKeyframeTime();
         for (const bone of targets) {
-            upsertBoneKeyframe(clip, bone, 'position', time);
-            upsertBoneKeyframe(clip, bone, 'quaternion', time);
-            upsertBoneKeyframe(clip, bone, 'scale', time);
+            const rest = this.boneRestPose.get(bone);
+            const baseOptions = {
+                duration: clip.duration,
+                guardStep: this.keyframeSnapStep ?? 1 / 30,
+            };
+            upsertBoneKeyframe(clip, bone, 'position', time, {
+                ...baseOptions,
+                defaultValue: rest ? getBoneLocalTrsPropertyValue(rest, 'position') : undefined,
+            });
+            upsertBoneKeyframe(clip, bone, 'quaternion', time, {
+                ...baseOptions,
+                defaultValue: rest ? getBoneLocalTrsPropertyValue(rest, 'quaternion') : undefined,
+            });
+            upsertBoneKeyframe(clip, bone, 'scale', time, {
+                ...baseOptions,
+                defaultValue: rest ? getBoneLocalTrsPropertyValue(rest, 'scale') : undefined,
+            });
         }
 
         clip.duration = Math.max(clip.duration, time, 0.001);
@@ -3375,14 +3389,16 @@ function upsertBoneKeyframe(
     bone: Bone,
     property: 'position' | 'quaternion' | 'scale',
     time: number,
+    options: { defaultValue?: number[]; duration?: number; guardStep?: number } = {},
 ): void {
     const value = getBonePropertyValue(bone, property);
     const existingIndex = clip.tracks.findIndex((track) => trackTargetsBoneProperty(track, bone, property));
     if (existingIndex < 0) {
         const trackName = getBoneTrackName(bone, property);
+        const seeded = seedNewBoneTrackKeyframes(value, time, options);
         const track = property === 'quaternion'
-            ? new QuaternionKeyframeTrack(trackName, [time], value)
-            : new VectorKeyframeTrack(trackName, [time], value);
+            ? new QuaternionKeyframeTrack(trackName, seeded.times, seeded.values)
+            : new VectorKeyframeTrack(trackName, seeded.times, seeded.values);
         clip.tracks.push(track);
         return;
     }
@@ -3403,6 +3419,52 @@ function upsertBoneKeyframe(
     }
 
     clip.tracks[existingIndex] = cloneTrackWithData(track, times, values);
+}
+
+function seedNewBoneTrackKeyframes(
+    value: number[],
+    time: number,
+    options: { defaultValue?: number[]; duration?: number; guardStep?: number },
+): { times: number[]; values: number[] } {
+    const duration = Math.max(options.duration ?? time, time, 0.001);
+    const defaultValue = options.defaultValue?.length === value.length ? options.defaultValue : null;
+    if (!defaultValue || duration <= 0.001) {
+        return { times: [time], values: value };
+    }
+
+    const guardStep = Math.max(options.guardStep ?? 1 / 30, 0.0001);
+    const times: number[] = [];
+    const values: number[] = [];
+    const push = (keyTime: number, keyValue: number[]) => {
+        const t = Math.max(0, Math.min(duration, Number(keyTime.toFixed(6))));
+        const existing = times.findIndex((item) => nearlyEqualTime(item, t));
+        if (existing >= 0) {
+            values.splice(existing * value.length, value.length, ...keyValue);
+            return;
+        }
+        times.push(t);
+        values.push(...keyValue);
+    };
+
+    if (time > 1e-5) {
+        push(0, defaultValue);
+        push(Math.max(0, time - guardStep), defaultValue);
+    }
+    push(time, value);
+    if (time < duration - 1e-5) {
+        push(Math.min(duration, time + guardStep), defaultValue);
+        push(duration, defaultValue);
+    }
+
+    const rows = times.map((keyTime, index) => ({
+        time: keyTime,
+        values: values.slice(index * value.length, index * value.length + value.length),
+    })).sort((a, b) => a.time - b.time);
+
+    return {
+        times: rows.map((row) => row.time),
+        values: rows.flatMap((row) => row.values),
+    };
 }
 
 function removeKeyframeNearTime(track: KeyframeTrack, bone: Bone | null, time: number, tolerance: number): KeyframeTrack | null {
@@ -3655,8 +3717,15 @@ function getBonePropertyValue(
     bone: Bone,
     property: 'position' | 'quaternion' | 'scale',
 ): number[] {
-    if (property === 'quaternion') return [bone.quaternion.x, bone.quaternion.y, bone.quaternion.z, bone.quaternion.w];
-    const vector = property === 'position' ? bone.position : bone.scale;
+    return getBoneLocalTrsPropertyValue(bone, property);
+}
+
+function getBoneLocalTrsPropertyValue(
+    trs: { position: Vector3; quaternion: Quaternion; scale: Vector3 },
+    property: 'position' | 'quaternion' | 'scale',
+): number[] {
+    if (property === 'quaternion') return [trs.quaternion.x, trs.quaternion.y, trs.quaternion.z, trs.quaternion.w];
+    const vector = property === 'position' ? trs.position : trs.scale;
     return [vector.x, vector.y, vector.z];
 }
 
