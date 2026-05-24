@@ -5159,9 +5159,10 @@ function beginBonePoseUndoTransaction(): void {
     if (suppressUndoRecording || animationPoseUndoDraft.snapshot) return;
     const snapshot = viewer.captureBonePoseSnapshot();
     if (!snapshot) return;
+    const animationSnapshot = viewer.captureAnimationSnapshot();
     animationPoseUndoDraft.snapshot = snapshot;
-    animationPoseUndoDraft.animationSnapshot = viewer.captureAnimationSnapshot();
-    animationPoseUndoDraft.animationLibrarySnapshot = viewer.captureAnimationLibrarySnapshot();
+    animationPoseUndoDraft.animationSnapshot = animationSnapshot;
+    animationPoseUndoDraft.animationLibrarySnapshot = animationSnapshot ? null : viewer.captureAnimationLibrarySnapshot();
     animationPoseUndoDraft.label = getBonePoseEditLabel();
     refreshButtons();
 }
