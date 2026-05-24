@@ -3749,10 +3749,22 @@ function mirrorAnimationTrack(track: KeyframeTrack, boneNames: Set<string>): Key
         return cloneTrackWithNamedData(track, track.name, times, values);
     }
 
-    const mirroredTarget = findMirroredBoneName(parsed.target, boneNames) ?? parsed.target;
+    const mirroredTarget = findMirroredAnimationTargetName(parsed.target, boneNames) ?? parsed.target;
     const mirroredName = `${mirroredTarget}.${parsed.property}`;
     const mirroredValues = mirrorTrackValues(parsed.property, values, track.getValueSize());
     return cloneTrackWithNamedData(track, mirroredName, times, mirroredValues);
+}
+
+function findMirroredAnimationTargetName(target: string, names: Set<string>): string | null {
+    const direct = findMirroredBoneName(target, names);
+    if (direct) return direct;
+
+    const separatorIndex = Math.max(target.lastIndexOf('/'), target.lastIndexOf('.'));
+    if (separatorIndex < 0) return null;
+    const prefix = target.slice(0, separatorIndex + 1);
+    const leaf = target.slice(separatorIndex + 1);
+    const mirroredLeaf = findMirroredBoneName(leaf, names);
+    return mirroredLeaf ? `${prefix}${mirroredLeaf}` : null;
 }
 
 function mirrorTrackValues(property: AnimationTrackProperty, values: number[], valueSize: number): number[] {
