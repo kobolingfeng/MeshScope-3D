@@ -1591,7 +1591,7 @@ function setupAnimationControls(): void {
     });
 
     animBoneSearch.addEventListener('input', () => {
-        renderSkeletonControls(viewer.getSkeletonEditorState());
+        renderSkeletonControls(viewer.getSkeletonEditorState(), { preserveSearch: true });
     });
 
     animBoneSearch.addEventListener('keydown', (event) => {
@@ -2347,7 +2347,10 @@ function syncAnimationEditor(): void {
     syncAnimationTrackControls(state, { resetInputs: shouldResetInputs });
 }
 
-function renderSkeletonControls(state: SkeletonEditorState): void {
+function renderSkeletonControls(
+    state: SkeletonEditorState,
+    options: { preserveSearch?: boolean } = {},
+): void {
     animShowSkeletonInput.checked = state.skeletonVisible;
     animShowSkeletonInput.disabled = !state.hasSkeleton;
     animShowTransformInput.checked = state.transformControlsVisible;
@@ -2385,7 +2388,7 @@ function renderSkeletonControls(state: SkeletonEditorState): void {
         const text = normalizeSearchText(`${bone.name} ${bone.parentName}`);
         return text.includes(query);
     });
-    if (state.selectedBoneIndex >= 0 && !bones.some((bone) => bone.index === state.selectedBoneIndex)) {
+    if (!options.preserveSearch && state.selectedBoneIndex >= 0 && !bones.some((bone) => bone.index === state.selectedBoneIndex)) {
         animBoneSearch.value = '';
         bones = state.bones;
     }
