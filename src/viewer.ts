@@ -2396,7 +2396,18 @@ export class Viewer {
     }
 
     private refreshActiveRootMatrices(): void {
-        this.getActiveRoot()?.updateMatrixWorld(true);
+        const root = this.getActiveRoot();
+        if (!root) return;
+        root.updateMatrixWorld(true);
+        root.traverse((node) => {
+            const skinned = node as Object3D & {
+                isSkinnedMesh?: boolean;
+                skeleton?: { update?: () => void };
+            };
+            if (skinned.isSkinnedMesh && typeof skinned.skeleton?.update === 'function') {
+                skinned.skeleton.update();
+            }
+        });
     }
 
     private disposeSkeletonEditor(): void {
