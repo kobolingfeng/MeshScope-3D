@@ -1687,7 +1687,11 @@ function nudgeSelectedTimelineKeyframes(direction: 1 | -1): boolean {
 
     const step = timelineSnapEnabled ? 1 / timelineFps : Math.max(state.duration / 1000, 0.001);
     const fromTimes = [...selectedKeyframeTimes];
-    const toTimes = fromTimes.map((time) => snapTimelineTime(time + step * direction, state.duration));
+    const toTimes = fromTimes.map((time) => (
+        direction > 0
+            ? snapTimelineTimeOpen(time + step)
+            : snapTimelineTime(time - step, state.duration)
+    ));
     if (fromTimes.every((time, index) => nearlyEqualTimeForUi(time, toTimes[index] ?? time))) return false;
 
     runAnimationEdit(direction > 0 ? '右移关键帧' : '左移关键帧', () => {
@@ -3516,8 +3520,8 @@ function handleTimelinePointerMove(event: PointerEvent): void {
 
     if (timelineDragState.mode === 'retime' && timelineDragState.moved) {
         const duration = viewer.getAnimationState().duration;
-        const start = getTimelineTimeAtClientX(timelineDragState.startClientX, duration, { snap: false });
-        const current = getTimelineTimeAtClientX(timelineDragState.currentClientX, duration, { snap: false });
+        const start = getTimelineTimeAtClientX(timelineDragState.startClientX, duration, { snap: false, clamp: false });
+        const current = getTimelineTimeAtClientX(timelineDragState.currentClientX, duration, { snap: false, clamp: false });
         timelineRetimePreviewDelta = current - start;
         renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
         event.preventDefault();
@@ -3536,8 +3540,8 @@ function handleTimelinePointerUp(event: PointerEvent): void {
     const startTimes = [...timelineDragState.startTimes];
     const start = getTimelineTimeAtClientX(timelineDragState.startClientX, duration);
     const end = getTimelineTimeAtClientX(event.clientX, duration);
-    const rawStart = getTimelineTimeAtClientX(timelineDragState.startClientX, duration, { snap: false });
-    const rawEnd = getTimelineTimeAtClientX(event.clientX, duration, { snap: false });
+    const rawStart = getTimelineTimeAtClientX(timelineDragState.startClientX, duration, { snap: false, clamp: false });
+    const rawEnd = getTimelineTimeAtClientX(event.clientX, duration, { snap: false, clamp: false });
     const markerTime = timelineDragState.markerTime;
 
     cancelTimelineSelection();
@@ -3547,7 +3551,7 @@ function handleTimelinePointerUp(event: PointerEvent): void {
     if (mode === 'retime') {
         if (moved && startTimes.length > 0) {
             const delta = rawEnd - rawStart;
-            const targetTimes = startTimes.map((time) => snapTimelineTime(time + delta, duration));
+            const targetTimes = startTimes.map((time) => snapTimelineTimeOpen(time + delta));
             runAnimationEdit('移动关键帧', () => {
                 moveTimelineKeyframesAtTimes(startTimes, targetTimes);
             });
@@ -3612,13 +3616,15 @@ function updateTimelineSelectionBox(): void {
 function getTimelineTimeAtClientX(
     clientX: number,
     duration: number,
-    options: { snap?: boolean } = {},
+    options: { snap?: boolean; clamp?: boolean } = {},
 ): number {
     if (duration <= 0) return 0;
     const rect = animKeyframeStrip.getBoundingClientRect();
-    const ratio = rect.width > 0 ? clamp((clientX - rect.left) / rect.width, 0, 1) : 0;
+    const rawRatio = rect.width > 0 ? (clientX - rect.left) / rect.width : 0;
+    const ratio = options.clamp === false ? rawRatio : clamp(rawRatio, 0, 1);
     const time = duration * ratio;
-    return options.snap === false ? time : snapTimelineTime(time, duration);
+    if (options.snap === false) return options.clamp === false ? time : clamp(time, 0, duration);
+    return options.clamp === false ? snapTimelineTimeOpen(time) : snapTimelineTime(time, duration);
 }
 
 function snapTimelineTime(time: number, duration: number): number {
