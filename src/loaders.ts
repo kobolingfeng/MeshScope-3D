@@ -102,7 +102,7 @@ export async function loadFromPath(path: string): Promise<Object3D> {
 }
 
 async function loadGLBFromPath(path: string): Promise<Object3D> {
-    const preview = await fs.createGlbPreview(path, LARGE_GLB_PREVIEW_THRESHOLD).catch(() => null);
+    const preview = await fs.createGlbPreview(path, LARGE_GLB_PREVIEW_THRESHOLD);
     if (preview?.used && preview.url) {
         const model = await loadGLTF(await readNativeBinaryUrl(preview.url), new Map());
         const lazyAnimations = (preview.animations ?? []).map((meta) => {
