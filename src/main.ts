@@ -2553,14 +2553,20 @@ function applySelectedAnimationEasing(): void {
 
     const selectedTimes = selectedKeyframeTimes.length > 0 ? selectedKeyframeTimes : [];
     let changed = false;
+    let changedTracks = 0;
     runAnimationEdit('动画缓动曲线', () => {
-        changed = viewer.applyAnimationTrackEasing(track.index, animationEasingCurve, { selectedTimes });
+        if (selectedTimes.length > 0) {
+            changedTracks = viewer.applyAnimationEasingToKeyframes(animationEasingCurve, { selectedTimes });
+            changed = changedTracks > 0;
+        } else {
+            changed = viewer.applyAnimationTrackEasing(track.index, animationEasingCurve, { selectedTimes });
+        }
     });
     syncAnimationTrackControls(viewer.getAnimationEditorState());
     renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
     showToast(
         changed
-            ? (selectedTimes.length > 0 ? '已应用到选中关键帧区间' : '已应用到当前轨道')
+            ? (selectedTimes.length > 0 ? `已应用到选中关键帧区间 · ${changedTracks} 条轨道` : '已应用到当前轨道')
             : '没有可应用的关键帧区间',
         changed ? 'success' : 'info',
     );

@@ -1869,6 +1869,33 @@ export class Viewer {
         return true;
     }
 
+    applyAnimationEasingToKeyframes(
+        curve: AnimationEasingCurve,
+        options: { selectedTimes: number[]; samples?: number },
+    ): number {
+        const clip = this.animClips[this.activeClipIndex];
+        if (!clip || options.selectedTimes.length === 0) return 0;
+
+        let changedTracks = 0;
+        clip.tracks = clip.tracks.map((track, index) => {
+            const meta = buildAnimationTrackMeta(track, index);
+            if (!meta.editable || track.times.length < 2) return track;
+            const eased = bakeEasingIntoTrack(track, curve, {
+                selectedTimes: options.selectedTimes,
+                samples: options.samples ?? 12,
+            });
+            if (eased === track) return track;
+            changedTracks += 1;
+            return eased;
+        });
+
+        if (changedTracks === 0) return 0;
+        this.refreshAnimationClipMetas();
+        this.refreshActiveAnimationAfterEdit(this.activeClipIndex);
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+        return changedTracks;
+    }
+
     selectAnimationClip(index: number, opts: { autoPlay?: boolean } = {}): void {
         if (!this.mixer) return;
         if (index < 0 || index >= this.animClips.length) return;
