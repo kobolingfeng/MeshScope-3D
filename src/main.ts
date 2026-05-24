@@ -2964,6 +2964,7 @@ function renderAnimationTimelineNow(
                     type="button"
                     data-keyframe-time="${marker.time}"
                     style="left:${left}%"
+                    title="${formatFrameTime(marker.time)}"
                     aria-label="关键帧 ${formatFrameTime(marker.time)}"
                     aria-pressed="${selected}"
                 ></button>
