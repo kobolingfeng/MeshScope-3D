@@ -1828,6 +1828,12 @@ function setupAnimationControls(): void {
     });
 
     animClipSearch.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            animClipSearch.value = '';
+            renderAnimationClipList(viewer.getAnimationState());
+            return;
+        }
         if (event.key !== 'Enter') return;
         const first = animClipList.querySelector<HTMLElement>('[data-clip-index]');
         if (!first) return;
@@ -1900,6 +1906,12 @@ function setupAnimationControls(): void {
     });
 
     animBoneSearch.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            animBoneSearch.value = '';
+            renderSkeletonControls(viewer.getSkeletonEditorState(), { preserveSearch: true });
+            return;
+        }
         if (event.key !== 'Enter') return;
         const first = animBoneList.querySelector<HTMLButtonElement>('[data-bone-index]');
         if (!first) return;
