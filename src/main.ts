@@ -290,6 +290,7 @@ const animRotationStepInput = $<HTMLInputElement>('anim-rotation-step');
 const animTranslationStepInput = $<HTMLInputElement>('anim-translation-step');
 const animKeyframeStrip = $('anim-keyframe-strip');
 const btnInsertKeyframe = $<HTMLButtonElement>('btn-insert-keyframe');
+const btnInsertChainKeyframe = $<HTMLButtonElement>('btn-insert-chain-keyframe');
 const btnDeleteKeyframe = $<HTMLButtonElement>('btn-delete-keyframe');
 const btnResetBonePose = $<HTMLButtonElement>('btn-reset-bone-pose');
 const btnResetBoneChainPose = $<HTMLButtonElement>('btn-reset-bone-chain-pose');
@@ -1160,8 +1161,16 @@ function setupKeyboardShortcuts(): void {
         if (lowerKey === 'k') {
             if (viewer.getSelectedBoneLocalTrs()) {
                 event.preventDefault();
-                runAnimationEdit('插入关键帧', () => viewer.insertSelectedBoneKeyframe());
-                showToast('已插入关键帧', 'success');
+                if (event.shiftKey) {
+                    let count = 0;
+                    runAnimationEdit('插入子链关键帧', () => {
+                        count = viewer.insertSelectedBoneChainKeyframe();
+                    });
+                    showToast(count > 0 ? `已给 ${count} 根骨骼插入关键帧` : '没有可插入的子链关键帧', count > 0 ? 'success' : 'info');
+                } else {
+                    runAnimationEdit('插入关键帧', () => viewer.insertSelectedBoneKeyframe());
+                    showToast('已插入关键帧', 'success');
+                }
             }
             return;
         }
@@ -1473,6 +1482,14 @@ function setupAnimationControls(): void {
             viewer.insertSelectedBoneKeyframe();
         });
         showToast('已插入骨骼关键帧', 'success');
+    });
+
+    btnInsertChainKeyframe.addEventListener('click', () => {
+        let count = 0;
+        runAnimationEdit('插入子链关键帧', () => {
+            count = viewer.insertSelectedBoneChainKeyframe();
+        });
+        showToast(count > 0 ? `已给 ${count} 根骨骼插入关键帧` : '没有可插入的子链关键帧', count > 0 ? 'success' : 'info');
     });
 
     btnDeleteKeyframe.addEventListener('click', () => {
@@ -2148,6 +2165,7 @@ function renderSkeletonControls(state: SkeletonEditorState): void {
         animIkChainLengthInput.value = String(state.ikChainLength);
     }
     btnInsertKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
+    btnInsertChainKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnDeleteKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animSelectedBone.textContent = state.selectedBoneName || '—';
     syncBoneSolverModeButtons(state.ikEnabled);

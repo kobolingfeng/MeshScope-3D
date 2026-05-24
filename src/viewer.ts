@@ -1328,6 +1328,16 @@ export class Viewer {
         this.autoKeyframeCurrentBonePose();
     }
 
+    insertSelectedBoneChainKeyframe(): number {
+        const root = this.selectedBone;
+        const clip = this.ensureActiveAnimationClip();
+        if (!root || !clip) return 0;
+
+        const targets = this.bones.filter((bone) => bone === root || this.isBoneDescendantOf(bone, root));
+        if (!this.autoKeyframeBonePoseTargets(clip, targets)) return 0;
+        return targets.length;
+    }
+
     autoKeyframeCurrentBonePose(): boolean {
         const clip = this.ensureActiveAnimationClip();
         if (!clip || !this.selectedBone) return false;
