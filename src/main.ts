@@ -2185,7 +2185,10 @@ function renderAnimationClipList(state: AnimationPlaybackState): void {
             clip.lazy ? 1 : 0,
         ].join(':')).join('|'),
     ].join('||');
-    if (renderKey === animationClipListRenderKey) return;
+    if (renderKey === animationClipListRenderKey) {
+        scrollActiveAnimationClipIntoView(state.activeIndex);
+        return;
+    }
     animationClipListRenderKey = renderKey;
 
     animClipList.innerHTML = clips.length > 0
@@ -2215,6 +2218,15 @@ function renderAnimationClipList(state: AnimationPlaybackState): void {
             `;
         }).join('')
         : '<div class="anim-list-empty">没有匹配动画</div>';
+    scrollActiveAnimationClipIntoView(state.activeIndex);
+}
+
+function scrollActiveAnimationClipIntoView(index: number): void {
+    if (index < 0) return;
+    requestAnimationFrame(() => {
+        const active = animClipList.querySelector<HTMLElement>(`[data-clip-index="${index}"]`);
+        active?.scrollIntoView({ block: 'nearest' });
+    });
 }
 
 function syncAnimationClipTools(state: AnimationPlaybackState): void {
