@@ -285,6 +285,7 @@ const animIkChainLengthInput = $<HTMLInputElement>('anim-ik-chain-length');
 const animKeyframeStrip = $('anim-keyframe-strip');
 const btnInsertKeyframe = $<HTMLButtonElement>('btn-insert-keyframe');
 const btnDeleteKeyframe = $<HTMLButtonElement>('btn-delete-keyframe');
+const btnResetBonePose = $<HTMLButtonElement>('btn-reset-bone-pose');
 const btnMirrorBonePose = $<HTMLButtonElement>('btn-mirror-bone-pose');
 const btnMirrorAnimation = $<HTMLButtonElement>('btn-mirror-animation');
 const btnAnimHistoryUndo = $<HTMLButtonElement>('btn-anim-history-undo');
@@ -1430,6 +1431,14 @@ function setupAnimationControls(): void {
         }
     });
 
+    btnResetBonePose.addEventListener('click', () => {
+        let changed = false;
+        runAnimationEdit('重置骨骼姿态', () => {
+            changed = viewer.resetSelectedBonePose();
+        });
+        showToast(changed ? '已重置当前骨骼姿态' : '没有可重置的骨骼', changed ? 'success' : 'info');
+    });
+
     btnMirrorBonePose.addEventListener('click', () => {
         mirrorSelectedBonePose();
     });
@@ -1689,6 +1698,7 @@ function syncAnimationClipTools(state: AnimationPlaybackState): void {
     btnNewTposeClip.disabled = !hasSkeleton;
     btnCopyClipKeys.disabled = !state.hasAnimations || state.activeIndex < 0;
     btnPasteClipKeys.disabled = !animationClipboard;
+    btnResetBonePose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
     btnMirrorBonePose.disabled = !hasSkeleton || skeleton.selectedBoneIndex < 0;
     btnMirrorAnimation.disabled = !hasSkeleton || !state.hasAnimations || state.activeIndex < 0;
 }

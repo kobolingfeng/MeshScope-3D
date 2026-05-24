@@ -308,6 +308,7 @@ export class Viewer {
     private skeletonHelper: SkeletonHelper | null = null;
     private bones: Bone[] = [];
     private boneMetaBase: Array<Omit<SkeletonBoneMeta, 'selected'>> = [];
+    private boneRestPose = new Map<Bone, { position: Vector3; quaternion: Quaternion; scale: Vector3 }>();
     private selectedBone: Bone | null = null;
     private boneHandles = new Map<Bone, Mesh>();
     private boneLines = new Map<Bone, Line[]>();
@@ -1699,6 +1700,24 @@ export class Viewer {
         };
     }
 
+    resetSelectedBonePose(): boolean {
+        const bone = this.selectedBone;
+        const rest = bone ? this.boneRestPose.get(bone) : null;
+        if (!bone || !rest) return false;
+
+        bone.position.copy(rest.position);
+        bone.quaternion.copy(rest.quaternion);
+        bone.scale.copy(rest.scale);
+        bone.updateMatrixWorld(true);
+        if (this.ikEnabled) this.solveIk();
+        this.refreshActiveRootMatrices();
+        this.updateSkeletonOverlay();
+        const clip = this.ensureActiveAnimationClip();
+        if (clip) this.autoKeyframeBonePoseTargets(clip, [bone]);
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+        return true;
+    }
+
     stepSelectedBoneTransform(axis: 'x' | 'y' | 'z', direction: 1 | -1): boolean {
         const bone = this.selectedBone;
         if (!bone) return false;
@@ -2237,6 +2256,11 @@ export class Viewer {
     private attachSkeletonEditor(object: Object3D): void {
         this.disposeSkeletonEditor();
         this.bones = collectBones(object);
+        this.boneRestPose = new Map(this.bones.map((bone) => [bone, {
+            position: bone.position.clone(),
+            quaternion: bone.quaternion.clone(),
+            scale: bone.scale.clone(),
+        }]));
         this.boneMetaBase = this.bones.map((bone, index) => ({
             index,
             name: getBoneDisplayName(bone, index),
@@ -2268,6 +2292,7 @@ export class Viewer {
         this.ikTargetMesh = null;
         this.ikChain = [];
         this.bones = [];
+        this.boneRestPose.clear();
         this.boneMetaBase = [];
         this.timelineMarkerCache = null;
         this.selectedBone = null;
