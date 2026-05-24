@@ -317,6 +317,7 @@ export class Viewer {
         trackCount: number;
         boneCount: number;
         counts: Map<Bone, number>;
+        keyTimes: Map<Bone, Set<string>>;
     } | null = null;
     private activeAction: AnimationAction | null = null;
     private activeClipIndex = -1;
@@ -3235,6 +3236,7 @@ export class Viewer {
             trackCount: clip.tracks.length,
             boneCount: this.bones.length,
             counts,
+            keyTimes: timesByBone,
         };
         return counts;
     }
@@ -3242,6 +3244,16 @@ export class Viewer {
     private hasBoneKeyframeAtTime(bone: Bone, time: number): boolean {
         const clip = this.animClips[this.activeClipIndex];
         if (!clip) return false;
+        this.getBoneKeyframeCounts();
+        const cachedTimes = this.boneKeyframeCountCache?.clip === clip
+            ? this.boneKeyframeCountCache.keyTimes.get(bone)
+            : null;
+        if (cachedTimes) {
+            const key = Number(time).toFixed(5);
+            return cachedTimes.has(key)
+                || [...cachedTimes].some((item) => nearlyEqualTime(Number(item), time));
+        }
+
         return clip.tracks.some((track) => {
             if (!trackTargetsBone(track, bone)) return false;
             return Array.from(track.times as ArrayLike<number>).some((item) => nearlyEqualTime(item, time));
