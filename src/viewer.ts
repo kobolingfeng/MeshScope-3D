@@ -228,6 +228,7 @@ export type SkeletonEditorState = {
     transformSpace: BoneTransformSpace;
     ikEnabled: boolean;
     ikChainLength: number;
+    ikIterations: number;
     autoKeyframeEnabled: boolean;
     keyframes: AnimationTimelineMarker[];
 };
@@ -385,6 +386,7 @@ export class Viewer {
     private transformChangedDuringDrag = false;
     private ikEnabled = false;
     private ikChainMaxLength = 4;
+    private ikIterations = 10;
     private ikTarget: Object3D | null = null;
     private ikTargetMesh: Mesh | null = null;
     private ikChain: Bone[] = [];
@@ -1252,6 +1254,7 @@ export class Viewer {
             transformSpace: this.boneTransformSpace,
             ikEnabled: this.ikEnabled,
             ikChainLength: this.ikChainMaxLength,
+            ikIterations: this.ikIterations,
             autoKeyframeEnabled: this.autoKeyframeEnabled,
             keyframes: includeKeyframes ? this.getTimelineMarkers() : [],
         };
@@ -1338,6 +1341,15 @@ export class Viewer {
         if (next === this.ikChainMaxLength) return;
         this.ikChainMaxLength = next;
         this.refreshIkChain();
+        if (this.ikEnabled) this.solveIk();
+        this.updateSkeletonOverlay();
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+    }
+
+    setIkIterations(iterations: number): void {
+        const next = Math.max(1, Math.min(64, Math.round(iterations)));
+        if (next === this.ikIterations) return;
+        this.ikIterations = next;
         if (this.ikEnabled) this.solveIk();
         this.updateSkeletonOverlay();
         this.onSkeletonChanged(this.getSkeletonEditorState());
@@ -2825,7 +2837,7 @@ export class Viewer {
         const parentWorldQuat = new Quaternion();
 
         this.ikTarget.getWorldPosition(targetWorld);
-        for (let iteration = 0; iteration < 10; iteration += 1) {
+        for (let iteration = 0; iteration < this.ikIterations; iteration += 1) {
             this.selectedBone.getWorldPosition(effectorWorld);
             if (effectorWorld.distanceToSquared(targetWorld) < 1e-6) break;
 

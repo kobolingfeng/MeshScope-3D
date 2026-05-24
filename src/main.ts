@@ -293,6 +293,7 @@ const animFkMode = $<HTMLButtonElement>('anim-fk-mode');
 const animIkMode = $<HTMLButtonElement>('anim-ik-mode');
 const animAutoKeyframeInput = $<HTMLInputElement>('anim-auto-keyframe');
 const animIkChainLengthInput = $<HTMLInputElement>('anim-ik-chain-length');
+const animIkIterationsInput = $<HTMLInputElement>('anim-ik-iterations');
 const animRotationStepInput = $<HTMLInputElement>('anim-rotation-step');
 const animTranslationStepInput = $<HTMLInputElement>('anim-translation-step');
 const animTimelineScroll = $('anim-timeline-scroll');
@@ -1693,6 +1694,13 @@ function setupAnimationControls(): void {
         syncAnimationEditor();
     });
 
+    animIkIterationsInput.addEventListener('change', () => {
+        const value = Number(animIkIterationsInput.value);
+        const iterations = Number.isFinite(value) ? clamp(value, 1, 64) : 10;
+        viewer.setIkIterations(iterations);
+        syncAnimationEditor();
+    });
+
     const applyBoneStepSettings = () => {
         const rotationDegrees = Number(animRotationStepInput.value);
         const translationPercent = Number(animTranslationStepInput.value);
@@ -2419,10 +2427,14 @@ function renderSkeletonControls(
     animAutoKeyframeInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animAutoKeyframeInput.checked = state.autoKeyframeEnabled;
     animIkChainLengthInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !state.ikEnabled;
+    animIkIterationsInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0 || !state.ikEnabled;
     animRotationStepInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     animTranslationStepInput.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     if (Number(animIkChainLengthInput.value) !== state.ikChainLength) {
         animIkChainLengthInput.value = String(state.ikChainLength);
+    }
+    if (Number(animIkIterationsInput.value) !== state.ikIterations) {
+        animIkIterationsInput.value = String(state.ikIterations);
     }
     btnInsertKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
     btnInsertChainKeyframe.disabled = !state.hasSkeleton || state.selectedBoneIndex < 0;
