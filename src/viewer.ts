@@ -508,7 +508,7 @@ export class Viewer {
         this.transformControls.addEventListener('objectChange', () => {
             if (this.transformDragging) this.transformChangedDuringDrag = true;
             if (this.ikEnabled) this.solveIk();
-            this.refreshActiveRootMatrices();
+            this.refreshEditedBoneHierarchies();
             this.updateSkeletonOverlay();
             if (!this.transformDragging) {
                 this.onSkeletonChanged(this.getSkeletonEditorState());
@@ -2027,9 +2027,11 @@ export class Viewer {
         if (trs.position) bone.position.fromArray(trs.position);
         if (trs.quaternion) bone.quaternion.fromArray(trs.quaternion);
         if (trs.scale) bone.scale.fromArray(trs.scale);
-        bone.updateMatrixWorld(true);
-        if (this.ikEnabled && bone === this.selectedBone) this.solveIk();
-        this.refreshActiveRootMatrices();
+        this.refreshEditedBoneHierarchies([bone]);
+        if (this.ikEnabled && bone === this.selectedBone) {
+            this.solveIk();
+            this.refreshEditedBoneHierarchies([bone, ...this.ikChain]);
+        }
         this.updateSkeletonOverlay();
         const clip = this.ensureActiveAnimationClip();
         if (clip) {
@@ -2057,13 +2059,15 @@ export class Viewer {
             if (item.position) bone.position.fromArray(item.position);
             if (item.quaternion) bone.quaternion.fromArray(item.quaternion);
             if (item.scale) bone.scale.fromArray(item.scale);
-            bone.updateMatrixWorld(true);
             targets.push(bone);
         }
 
         if (targets.length === 0) return 0;
-        if (this.ikEnabled && this.selectedBone && targets.includes(this.selectedBone)) this.solveIk();
-        this.refreshActiveRootMatrices();
+        this.refreshEditedBoneHierarchies(targets);
+        if (this.ikEnabled && this.selectedBone && targets.includes(this.selectedBone)) {
+            this.solveIk();
+            this.refreshEditedBoneHierarchies([this.selectedBone, ...this.ikChain]);
+        }
         this.updateSkeletonOverlay();
         const clip = this.ensureActiveAnimationClip();
         if (clip) this.autoKeyframeBonePoseTargets(clip, [...new Set(targets)]);
@@ -2085,8 +2089,7 @@ export class Viewer {
         target.position.fromArray(mirrored.position);
         target.quaternion.fromArray(mirrored.quaternion);
         target.scale.fromArray(mirrored.scale);
-        target.updateMatrixWorld(true);
-        this.refreshActiveRootMatrices();
+        this.refreshEditedBoneHierarchies([target]);
 
         const clip = this.ensureActiveAnimationClip();
         if (clip) this.autoKeyframeBonePoseTargets(clip, [target]);
@@ -2110,9 +2113,11 @@ export class Viewer {
         bone.position.copy(rest.position);
         bone.quaternion.copy(rest.quaternion);
         bone.scale.copy(rest.scale);
-        bone.updateMatrixWorld(true);
-        if (this.ikEnabled) this.solveIk();
-        this.refreshActiveRootMatrices();
+        this.refreshEditedBoneHierarchies([bone]);
+        if (this.ikEnabled) {
+            this.solveIk();
+            this.refreshEditedBoneHierarchies([bone, ...this.ikChain]);
+        }
         this.updateSkeletonOverlay();
         const clip = this.ensureActiveAnimationClip();
         if (clip) this.autoKeyframeBonePoseTargets(clip, [bone]);
@@ -2131,12 +2136,14 @@ export class Viewer {
             bone.position.copy(rest.position);
             bone.quaternion.copy(rest.quaternion);
             bone.scale.copy(rest.scale);
-            bone.updateMatrixWorld(true);
             changed += 1;
         }
         if (changed === 0) return 0;
-        if (this.ikEnabled) this.solveIk();
-        this.refreshActiveRootMatrices();
+        this.refreshEditedBoneHierarchies(targets);
+        if (this.ikEnabled) {
+            this.solveIk();
+            this.refreshEditedBoneHierarchies(targets);
+        }
         this.updateSkeletonOverlay();
         const clip = this.ensureActiveAnimationClip();
         if (clip) this.autoKeyframeBonePoseTargets(clip, targets);
@@ -2153,12 +2160,14 @@ export class Viewer {
             bone.position.copy(rest.position);
             bone.quaternion.copy(rest.quaternion);
             bone.scale.copy(rest.scale);
-            bone.updateMatrixWorld(true);
             changed += 1;
         }
         if (changed === 0) return 0;
-        if (this.ikEnabled) this.solveIk();
-        this.refreshActiveRootMatrices();
+        this.refreshEditedBoneHierarchies(targets);
+        if (this.ikEnabled) {
+            this.solveIk();
+            this.refreshEditedBoneHierarchies(targets);
+        }
         this.updateSkeletonOverlay();
         const clip = this.ensureActiveAnimationClip();
         if (clip) this.autoKeyframeBonePoseTargets(clip, targets);
@@ -2205,9 +2214,11 @@ export class Viewer {
             }
         }
 
-        bone.updateMatrixWorld(true);
-        if (this.ikEnabled) this.solveIk();
-        this.refreshActiveRootMatrices();
+        this.refreshEditedBoneHierarchies([bone]);
+        if (this.ikEnabled) {
+            this.solveIk();
+            this.refreshEditedBoneHierarchies([bone, ...this.ikChain]);
+        }
         this.updateSkeletonOverlay();
         this.autoKeyframeCurrentBonePose();
         this.onSkeletonChanged(this.getSkeletonEditorState());
@@ -2767,6 +2778,19 @@ export class Viewer {
                 skinned.skeleton.update();
             }
         });
+    }
+
+    private refreshEditedBoneHierarchies(targets: Bone[] = this.selectedBone ? [this.selectedBone] : []): void {
+        const roots = new Set<Object3D>();
+        for (const target of targets) {
+            if (!target) continue;
+            let root: Object3D = target;
+            while (root.parent && (root.parent as Bone).isBone) root = root.parent;
+            roots.add(root);
+        }
+
+        for (const root of roots) root.updateMatrixWorld(true);
+        this.refreshActiveRootMatrices();
     }
 
     private disposeSkeletonEditor(): void {
