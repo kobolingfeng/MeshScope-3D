@@ -1581,13 +1581,14 @@ export class Viewer {
         const clip = this.animClips[this.activeClipIndex];
         if (!clip || times.length === 0) return;
 
+        const tolerance = Math.max(1e-4, ((this.keyframeSnapStep ?? 1 / 30) * 0.5) + 1e-6);
         let changed = false;
         const nextTracks: KeyframeTrack[] = [];
         for (const track of clip.tracks) {
             let nextTrack: KeyframeTrack | null = track;
             for (const time of times) {
                 if (!nextTrack) break;
-                const candidate = removeKeyframeNearTime(nextTrack, bone, time);
+                const candidate = removeKeyframeNearTime(nextTrack, bone, time, tolerance);
                 if (candidate !== nextTrack) changed = true;
                 nextTrack = candidate;
             }
@@ -3385,7 +3386,7 @@ function upsertBoneKeyframe(
     clip.tracks[existingIndex] = cloneTrackWithData(track, times, values);
 }
 
-function removeKeyframeNearTime(track: KeyframeTrack, bone: Bone | null, time: number): KeyframeTrack | null {
+function removeKeyframeNearTime(track: KeyframeTrack, bone: Bone | null, time: number, tolerance: number): KeyframeTrack | null {
     if (bone) {
         const property = parseAnimationTrackName(track.name).property;
         if (property !== 'position' && property !== 'quaternion' && property !== 'scale') return track;
@@ -3406,7 +3407,7 @@ function removeKeyframeNearTime(track: KeyframeTrack, bone: Bone | null, time: n
         }
     }
 
-    if (removeIndex < 0 || bestDistance > 1 / 24) return track;
+    if (removeIndex < 0 || bestDistance > tolerance) return track;
     times.splice(removeIndex, 1);
     values.splice(removeIndex * valueSize, valueSize);
     if (times.length === 0) return null;
