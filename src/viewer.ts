@@ -909,10 +909,6 @@ export class Viewer {
         const node = this.findActiveObjectByUuid(id);
         if (!node) return false;
         node.visible = visible;
-        const root = this.getActiveRoot();
-        if (node === root) {
-            this.ensureMaterialEditorState(root).visible = visible;
-        }
         this.invalidateModelBounds();
         return true;
     }
@@ -925,7 +921,6 @@ export class Viewer {
             node.visible = visible;
             count += 1;
         });
-        this.ensureMaterialEditorState(root).visible = visible;
         this.invalidateModelBounds();
         return count;
     }

@@ -916,7 +916,6 @@ function setupOutlineAndSiblingControls(): void {
     btnOutlineShowAll.addEventListener('click', () => {
         const count = viewer.setAllOutlineNodesVisible(true);
         renderModelOutline();
-        syncMaterialControls({ syncTextures: false });
         showToast(count > 0 ? `已显示 ${count} 个对象` : '没有可显示的对象', count > 0 ? 'success' : 'info');
     });
 
@@ -933,7 +932,6 @@ function setupOutlineAndSiblingControls(): void {
         viewer.setOutlineNodeVisible(id, input.checked);
         renderModelOutline();
         syncPropertyPanel();
-        syncMaterialControls({ syncTextures: false });
     });
 
     modelOutlineList.addEventListener('click', (event) => {
@@ -6183,7 +6181,7 @@ async function exportActiveDocument(
         throw new Error('当前没有可导出的动画');
     }
 
-    return withCleanExportUserData(document.root, () => new Promise<ArrayBuffer | Record<string, unknown>>((resolve, reject) => {
+    return withPreviewVisibilityForExport(document.root, () => withCleanExportUserData(document.root, () => new Promise<ArrayBuffer | Record<string, unknown>>((resolve, reject) => {
         (exporter as unknown as {
             parse: (
                 input: Object3D,
@@ -6197,7 +6195,28 @@ async function exportActiveDocument(
             trs: true,
             animations,
         });
-    }));
+    })));
+}
+
+async function withPreviewVisibilityForExport<T>(rootModel: Object3D, run: () => Promise<T>): Promise<T> {
+    const patches: Array<{
+        object: Object3D;
+        visible: boolean;
+    }> = [];
+
+    rootModel.traverse((object) => {
+        if (object.visible) return;
+        patches.push({ object, visible: object.visible });
+        object.visible = true;
+    });
+
+    try {
+        return await run();
+    } finally {
+        for (const patch of patches) {
+            patch.object.visible = patch.visible;
+        }
+    }
 }
 
 async function withCleanExportUserData<T>(rootModel: Object3D, run: () => Promise<T>): Promise<T> {
@@ -6456,7 +6475,7 @@ function renderModelOutlineItem(item: ModelOutlineItem): string {
     const typeClass = item.collision ? 'outline-type collision' : 'outline-type';
     return `
         <div class="${classes}" role="treeitem" aria-level="${item.depth + 1}" style="--outline-depth:${item.depth}">
-            <input class="outline-visible" data-outline-visible data-outline-id="${escapeHtml(item.id)}" type="checkbox" ${item.visible ? 'checked' : ''} aria-label="显示 ${escapeHtml(item.name)}">
+            <input class="outline-visible" data-outline-visible data-outline-id="${escapeHtml(item.id)}" type="checkbox" ${item.visible ? 'checked' : ''} aria-label="预览显示 ${escapeHtml(item.name)}">
             <button class="outline-name outline-frame-btn" type="button" data-outline-frame data-outline-id="${escapeHtml(item.id)}" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</button>
             <span class="${typeClass}">${escapeHtml(typeLabel)}</span>
         </div>
