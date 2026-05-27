@@ -258,6 +258,19 @@ export type MaterialEditSnapshot = {
     textureTransforms: Partial<Record<TextureSlotId, TextureTransform>>;
 };
 
+export type ModelOutlineItem = {
+    id: string;
+    name: string;
+    type: string;
+    depth: number;
+    visible: boolean;
+    renderable: boolean;
+    mesh: boolean;
+    bone: boolean;
+    collision: boolean;
+    childCount: number;
+};
+
 type MaterialEditorState = MaterialEditSnapshot;
 
 type UvPointRef = {
@@ -864,6 +877,80 @@ export class Viewer {
         }
     }
 
+    getModelOutline(): ModelOutlineItem[] {
+        const root = this.getActiveRoot();
+        if (!root) return [];
+
+        const items: ModelOutlineItem[] = [];
+        const visit = (node: Object3D, depth: number) => {
+            const mesh = (node as Mesh).isMesh === true;
+            const bone = (node as Bone).isBone === true;
+            const name = getObjectDisplayName(node, items.length);
+            items.push({
+                id: node.uuid,
+                name,
+                type: getOutlineObjectType(node),
+                depth,
+                visible: node.visible,
+                renderable: isRenderableOutlineObject(node),
+                mesh,
+                bone,
+                collision: isCollisionOutlineObjectName(name),
+                childCount: node.children.length,
+            });
+            for (const child of node.children) visit(child, depth + 1);
+        };
+
+        visit(root, 0);
+        return items;
+    }
+
+    setOutlineNodeVisible(id: string, visible: boolean): boolean {
+        const node = this.findActiveObjectByUuid(id);
+        if (!node) return false;
+        node.visible = visible;
+        const root = this.getActiveRoot();
+        if (node === root) {
+            this.ensureMaterialEditorState(root).visible = visible;
+        }
+        this.invalidateModelBounds();
+        return true;
+    }
+
+    setAllOutlineNodesVisible(visible: boolean): number {
+        const root = this.getActiveRoot();
+        if (!root) return 0;
+        let count = 0;
+        root.traverse((node) => {
+            node.visible = visible;
+            count += 1;
+        });
+        this.ensureMaterialEditorState(root).visible = visible;
+        this.invalidateModelBounds();
+        return count;
+    }
+
+    setCollisionOutlineVisible(visible: boolean): number {
+        const root = this.getActiveRoot();
+        if (!root) return 0;
+        let count = 0;
+        root.traverse((node) => {
+            if (node === root) return;
+            if (!isCollisionOutlineObjectName(node.name)) return;
+            node.visible = visible;
+            count += 1;
+        });
+        if (count > 0) this.invalidateModelBounds();
+        return count;
+    }
+
+    frameOutlineNode(id: string): boolean {
+        const node = this.findActiveObjectByUuid(id);
+        if (!node) return false;
+        this.frameObject(node);
+        return true;
+    }
+
     setModelOpacity(opacity: number): void {
         const root = this.getActiveRoot();
         if (!root) return;
@@ -1053,6 +1140,20 @@ export class Viewer {
 
     private getActiveRoot(): Object3D | null {
         return this.modelGroup.children[0] ?? null;
+    }
+
+    private findActiveObjectByUuid(id: string): Object3D | null {
+        const root = this.getActiveRoot();
+        if (!root) return null;
+        return root.uuid === id
+            ? root
+            : root.getObjectByProperty('uuid', id) ?? null;
+    }
+
+    private invalidateModelBounds(): void {
+        const root = this.getActiveRoot();
+        if (root) this.boundsCache.delete(root);
+        this.boundsCache.delete(this.modelGroup);
     }
 
     private ensureMaterialEditorState(
@@ -3421,6 +3522,54 @@ function setLazyAnimationClipSource(clip: AnimationClip, source: LazyAnimationCl
     }
     target.userData = target.userData ?? {};
     target.userData.__meshscopeLazyGlbAnimation = { ...source };
+}
+
+function getObjectDisplayName(node: Object3D, index: number): string {
+    const name = node.name?.trim();
+    if (name) return name;
+    return index === 0 ? 'Scene Root' : `${getOutlineObjectType(node)} ${index + 1}`;
+}
+
+function getOutlineObjectType(node: Object3D): string {
+    const typed = node as Object3D & {
+        isSkinnedMesh?: boolean;
+        isMesh?: boolean;
+        isBone?: boolean;
+        isLine?: boolean;
+        isPoints?: boolean;
+        isSprite?: boolean;
+        isGroup?: boolean;
+    };
+    if (typed.isSkinnedMesh) return 'SkinnedMesh';
+    if (typed.isMesh) return 'Mesh';
+    if (typed.isBone) return 'Bone';
+    if (typed.isLine) return 'Line';
+    if (typed.isPoints) return 'Points';
+    if (typed.isSprite) return 'Sprite';
+    if (typed.isGroup) return 'Group';
+    return node.type || 'Object3D';
+}
+
+function isRenderableOutlineObject(node: Object3D): boolean {
+    const typed = node as Object3D & {
+        isMesh?: boolean;
+        isLine?: boolean;
+        isPoints?: boolean;
+        isSprite?: boolean;
+    };
+    return Boolean(typed.isMesh || typed.isLine || typed.isPoints || typed.isSprite);
+}
+
+function isCollisionOutlineObjectName(name: string): boolean {
+    const normalized = name.trim().toLocaleLowerCase();
+    if (!normalized) return false;
+    return /(^|[_\-. ])(collision|collider|collisions|convex|physics|phys|proxy|simplecollision|simple_collision|col|ucx|ubx|ucp|usp)([_\-. ]|$)/.test(normalized)
+        || normalized.startsWith('ucx_')
+        || normalized.startsWith('ubx_')
+        || normalized.startsWith('ucp_')
+        || normalized.startsWith('usp_')
+        || normalized.endsWith('_col')
+        || normalized.endsWith('_collision');
 }
 
 function collectBones(root: Object3D): Bone[] {

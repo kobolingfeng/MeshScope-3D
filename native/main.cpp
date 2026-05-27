@@ -29,6 +29,7 @@
 #include <WebView2.h>
 #include <WebView2EnvironmentOptions.h>
 #include <string>
+#include <cstdint>
 #include <cctype>
 #include <cwctype>
 #include <cstring>
@@ -1656,6 +1657,7 @@ static void reg_fs() {
                 {"name",   W2U(e.path().filename().wstring())},
                 {"isDir",  e.is_directory()},
                 {"isFile", e.is_regular_file()},
+                {"size",   e.is_regular_file() ? static_cast<std::uintmax_t>(e.file_size()) : 0},
             });
         }
         return entries;

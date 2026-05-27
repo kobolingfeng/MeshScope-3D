@@ -8,6 +8,13 @@ export type GlbAnimationMeta = {
     tracks: number;
 };
 
+export type DirectoryEntry = {
+    name: string;
+    isDir: boolean;
+    isFile?: boolean;
+    size?: number;
+};
+
 export const win = {
     setTitle:       (title: string) => invoke<boolean>('window.setTitle', { title }),
     minimize:       () => invoke<boolean>('window.minimize'),
@@ -32,6 +39,7 @@ export const dialog = {
 };
 
 export const fs = {
+    readDir:        (path: string) => invoke<DirectoryEntry[]>('fs.readDir', { path }),
     readTextFile:   (path: string) => invoke<string>('fs.readTextFile', { path }),
     createGlbPreview: (path: string, minBytes = 512 * 1024 * 1024) =>
         invoke<{

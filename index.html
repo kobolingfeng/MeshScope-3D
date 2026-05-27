@@ -395,6 +395,27 @@
                             <strong class="property-value" id="prop-center">—</strong>
                         </div>
                     </details>
+
+                    <details class="inspector-group" open data-group-id="model-outline">
+                        <summary>模型大纲</summary>
+                        <div class="outline-panel">
+                            <div class="outline-toolbar">
+                                <input id="model-outline-search" class="text-input" type="search" placeholder="搜索模型 / 碰撞体" aria-label="搜索模型大纲">
+                                <button id="btn-outline-show-all" class="mini-btn" type="button">全显</button>
+                                <button id="btn-outline-hide-collision" class="mini-btn" type="button">隐藏碰撞</button>
+                            </div>
+                            <div class="outline-meta" id="model-outline-meta">未加载</div>
+                            <div class="model-outline-list" id="model-outline-list" role="tree" aria-label="GLB 模型大纲"></div>
+                        </div>
+                    </details>
+
+                    <details class="inspector-group" open data-group-id="sibling-glbs">
+                        <summary>同目录 GLB</summary>
+                        <div class="outline-panel">
+                            <div class="outline-meta" id="sibling-glb-meta">打开本地 GLB 后显示</div>
+                            <div class="sibling-glb-list" id="sibling-glb-list" role="listbox" aria-label="同目录 GLB 列表"></div>
+                        </div>
+                    </details>
                 </section>
 
                 <section class="inspector-view" id="panel-properties" role="tabpanel" aria-labelledby="tab-properties" data-inspector-view="properties">

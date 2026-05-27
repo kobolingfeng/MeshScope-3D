@@ -13,6 +13,7 @@ import {
     type BoneTransformSpace,
     type MaterialEditMode,
     type MaterialEditSnapshot,
+    type ModelOutlineItem,
     type SkeletonEditorState,
     type TextureSlotId,
     type TextureSlotState,
@@ -32,6 +33,12 @@ type SaveDestination = 'overwrite' | 'save-as';
 type SaveChoice = {
     destination: SaveDestination;
     animationScope: AnimationExportScope;
+};
+type SiblingGlbEntry = {
+    path: string;
+    name: string;
+    size: number;
+    active: boolean;
 };
 type AnimationEasingName = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'custom';
 type UvSelectionMode = 'vertex' | 'edge' | 'face';
@@ -116,6 +123,8 @@ type DocumentSession = {
     root: Object3D;
     kind: 'sample' | 'model';
     sourcePath?: string;
+    siblingGlbDir?: string;
+    siblingGlbs?: SiblingGlbEntry[];
     dirty: boolean;
     undoStack: UndoEntry[];
     redoStack: UndoEntry[];
@@ -147,6 +156,8 @@ const DEFAULT_LAYOUT: LayoutState = {
         runtime: true,
         stats: true,
         document: true,
+        'model-outline': true,
+        'sibling-glbs': true,
         camera: true,
         material: true,
         textures: true,
@@ -216,6 +227,13 @@ const propDocState = $('prop-doc-state');
 const propDocCount = $('prop-doc-count');
 const propBounds = $('prop-bounds');
 const propCenter = $('prop-center');
+const modelOutlineSearch = $<HTMLInputElement>('model-outline-search');
+const btnOutlineShowAll = $<HTMLButtonElement>('btn-outline-show-all');
+const btnOutlineHideCollision = $<HTMLButtonElement>('btn-outline-hide-collision');
+const modelOutlineMeta = $('model-outline-meta');
+const modelOutlineList = $('model-outline-list');
+const siblingGlbMeta = $('sibling-glb-meta');
+const siblingGlbList = $('sibling-glb-list');
 const propCameraPos = $('prop-camera-pos');
 const propCameraTarget = $('prop-camera-target');
 
@@ -461,6 +479,8 @@ let loadingMessage = '';
 let loadingCount = 0;
 let lastPropertySyncTs = 0;
 let nativeOpenQueue = Promise.resolve();
+let siblingGlbScanSeq = 0;
+const siblingGlbCache = new Map<string, SiblingGlbEntry[]>();
 let selectedTextureSlot: TextureSlotId | null = null;
 let currentTextureSlotState: TextureSlotState | null = null;
 let currentUvEditorState: UvEditorState | null = null;
@@ -657,6 +677,7 @@ async function bootstrap(): Promise<void> {
     setupLayoutControls();
     setupContentModeControls();
     setupInspector();
+    setupOutlineAndSiblingControls();
     setupDocumentTabs();
     setupFileInput();
     setupViewportDrop();
@@ -885,6 +906,51 @@ function setupInspector(): void {
     });
 
     applyInspectorState();
+}
+
+function setupOutlineAndSiblingControls(): void {
+    modelOutlineSearch.addEventListener('input', () => {
+        renderModelOutline();
+    });
+
+    btnOutlineShowAll.addEventListener('click', () => {
+        const count = viewer.setAllOutlineNodesVisible(true);
+        renderModelOutline();
+        syncMaterialControls({ syncTextures: false });
+        showToast(count > 0 ? `已显示 ${count} 个对象` : '没有可显示的对象', count > 0 ? 'success' : 'info');
+    });
+
+    btnOutlineHideCollision.addEventListener('click', () => {
+        const count = viewer.setCollisionOutlineVisible(false);
+        renderModelOutline();
+        showToast(count > 0 ? `已隐藏 ${count} 个疑似碰撞体` : '未发现疑似碰撞体', count > 0 ? 'success' : 'info');
+    });
+
+    modelOutlineList.addEventListener('change', (event) => {
+        const input = (event.target as HTMLElement).closest<HTMLInputElement>('[data-outline-visible]');
+        const id = input?.dataset.outlineId;
+        if (!input || !id) return;
+        viewer.setOutlineNodeVisible(id, input.checked);
+        renderModelOutline();
+        syncPropertyPanel();
+        syncMaterialControls({ syncTextures: false });
+    });
+
+    modelOutlineList.addEventListener('click', (event) => {
+        const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-outline-frame]');
+        const id = button?.dataset.outlineId;
+        if (!button || !id) return;
+        if (viewer.frameOutlineNode(id)) {
+            syncPropertyPanelCamera();
+        }
+    });
+
+    siblingGlbList.addEventListener('click', (event) => {
+        const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-sibling-path]');
+        const path = button?.dataset.siblingPath;
+        if (!button || !path || button.classList.contains('active')) return;
+        void openSiblingGlb(path);
+    });
 }
 
 function setupDocumentTabs(): void {
@@ -4087,6 +4153,7 @@ function setupPropertyControls(): void {
             viewer.setModelVisible(matVisible.checked);
         });
         syncMaterialControls();
+        renderModelOutline();
     });
 
     matMode.addEventListener('change', () => {
@@ -5693,6 +5760,7 @@ function activateDocument(id: string, options: { fit?: boolean } = {}): void {
     scheduleRefreshStats();
     refreshButtons();
     syncActiveInspectorControls();
+    void scanSiblingGlbsForDocument(target.id);
 }
 
 function closeDocument(id: string): void {
@@ -5738,6 +5806,8 @@ function clearActiveDocument(): void {
     active.kind = 'sample';
     active.name = '内置示例';
     active.sourcePath = undefined;
+    active.siblingGlbDir = undefined;
+    active.siblingGlbs = undefined;
     active.dirty = false;
     active.undoStack = [];
     active.redoStack = [];
@@ -5825,6 +5895,83 @@ function enqueueNativePathLoad(paths: string[]): Promise<void> {
     return nativeOpenQueue.catch((error) => {
         console.error(error);
     });
+}
+
+async function scanSiblingGlbsForDocument(documentId: string): Promise<void> {
+    const document = documents.find((item) => item.id === documentId);
+    if (!document) return;
+
+    const sourcePath = document.sourcePath;
+    if (!inNative || !sourcePath || extOf(sourcePath) !== 'glb') {
+        document.siblingGlbDir = undefined;
+        document.siblingGlbs = undefined;
+        if (document.id === activeDocumentId) renderSiblingGlbList();
+        return;
+    }
+
+    const dir = dirNameOfPath(sourcePath);
+    if (!dir) {
+        document.siblingGlbDir = undefined;
+        document.siblingGlbs = [];
+        if (document.id === activeDocumentId) renderSiblingGlbList();
+        return;
+    }
+
+    document.siblingGlbDir = dir;
+    const cached = siblingGlbCache.get(dir);
+    if (cached) {
+        document.siblingGlbs = markActiveSiblingGlbEntries(cached, sourcePath);
+        if (document.id === activeDocumentId) renderSiblingGlbList();
+        return;
+    }
+
+    document.siblingGlbs = undefined;
+    if (document.id === activeDocumentId) renderSiblingGlbList();
+
+    const scanId = ++siblingGlbScanSeq;
+    try {
+        const entries = await fs.readDir(dir);
+        const glbs = entries
+            .filter((entry) => !entry.isDir && extOf(entry.name) === 'glb')
+            .map((entry) => ({
+                path: joinNativePath(dir, entry.name),
+                name: entry.name,
+                size: entry.size ?? 0,
+                active: false,
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
+
+        siblingGlbCache.set(dir, glbs);
+        const latest = documents.find((item) => item.id === documentId);
+        if (!latest || latest.siblingGlbDir !== dir) return;
+        latest.siblingGlbs = markActiveSiblingGlbEntries(glbs, latest.sourcePath ?? sourcePath);
+        if (scanId === siblingGlbScanSeq || latest.id === activeDocumentId) renderSiblingGlbList();
+    } catch (error) {
+        console.warn('scanSiblingGlbsForDocument failed', error);
+        const latest = documents.find((item) => item.id === documentId);
+        if (!latest || latest.siblingGlbDir !== dir) return;
+        latest.siblingGlbs = [];
+        if (latest.id === activeDocumentId) {
+            renderSiblingGlbList();
+            showToast('扫描同目录 GLB 失败', 'error');
+        }
+    }
+}
+
+function markActiveSiblingGlbEntries(entries: SiblingGlbEntry[], sourcePath: string): SiblingGlbEntry[] {
+    return entries.map((entry) => ({
+        ...entry,
+        active: sameNativePath(entry.path, sourcePath),
+    }));
+}
+
+async function openSiblingGlb(path: string): Promise<void> {
+    const existing = documents.find((document) => document.sourcePath && sameNativePath(document.sourcePath, path));
+    if (existing) {
+        activateDocument(existing.id, { fit: true });
+        return;
+    }
+    await enqueueNativePathLoad([path]);
 }
 
 function showModelLoadNotice(model: Object3D): void {
@@ -6162,6 +6309,8 @@ function openDocumentWithModel(name: string, rootModel: Object3D, sourcePath?: s
         active.root = rootModel;
         active.kind = 'model';
         active.sourcePath = sourcePath;
+        active.siblingGlbDir = undefined;
+        active.siblingGlbs = undefined;
         active.dirty = false;
         active.undoStack = [];
         active.redoStack = [];
@@ -6201,6 +6350,8 @@ function syncDocumentState(): void {
     setText(sceneStateEls, stateLabel);
     setText(modelNameEls, active.name);
     renderDocumentTabs();
+    renderModelOutline();
+    renderSiblingGlbList();
     updateWindowTitle(active.name);
     updateStatusChips();
 }
@@ -6263,6 +6414,81 @@ function syncPropertyPanel(): void {
     propDocCount.textContent = String(documents.length);
     propBounds.textContent = bounds ? formatVector(bounds.size) : '—';
     propCenter.textContent = bounds ? formatVector(bounds.center) : '—';
+}
+
+function renderModelOutline(): void {
+    const items = viewer.getModelOutline();
+    const query = normalizeSearchText(modelOutlineSearch.value);
+    const filtered = query
+        ? items.filter((item) => normalizeSearchText(`${item.name} ${item.type} ${item.collision ? 'collision 碰撞' : ''}`).includes(query))
+        : items;
+
+    const visibleCount = items.filter((item) => item.visible).length;
+    const meshCount = items.filter((item) => item.mesh).length;
+    const collisionCount = items.filter((item) => item.collision).length;
+    modelOutlineMeta.textContent = items.length === 0
+        ? '未加载'
+        : `${visibleCount}/${items.length} 可见 · ${meshCount} 网格 · ${collisionCount} 疑似碰撞`;
+
+    btnOutlineShowAll.disabled = items.length === 0;
+    btnOutlineHideCollision.disabled = collisionCount === 0;
+
+    if (items.length === 0) {
+        modelOutlineList.innerHTML = '<div class="anim-list-empty">尚无模型大纲</div>';
+        return;
+    }
+
+    if (filtered.length === 0) {
+        modelOutlineList.innerHTML = '<div class="anim-list-empty">没有匹配对象</div>';
+        return;
+    }
+
+    modelOutlineList.innerHTML = filtered.map(renderModelOutlineItem).join('');
+}
+
+function renderModelOutlineItem(item: ModelOutlineItem): string {
+    const classes = [
+        'model-outline-item',
+        item.visible ? '' : 'is-hidden',
+        item.collision ? 'is-collision' : '',
+    ].filter(Boolean).join(' ');
+    const typeLabel = item.collision ? '碰撞' : item.bone ? '骨骼' : item.renderable ? item.type : `${item.type} · ${item.childCount}`;
+    const typeClass = item.collision ? 'outline-type collision' : 'outline-type';
+    return `
+        <div class="${classes}" role="treeitem" aria-level="${item.depth + 1}" style="--outline-depth:${item.depth}">
+            <input class="outline-visible" data-outline-visible data-outline-id="${escapeHtml(item.id)}" type="checkbox" ${item.visible ? 'checked' : ''} aria-label="显示 ${escapeHtml(item.name)}">
+            <button class="outline-name outline-frame-btn" type="button" data-outline-frame data-outline-id="${escapeHtml(item.id)}" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</button>
+            <span class="${typeClass}">${escapeHtml(typeLabel)}</span>
+        </div>
+    `;
+}
+
+function renderSiblingGlbList(): void {
+    const active = getActiveDocument();
+    if (!active || !inNative || !active.sourcePath || extOf(active.sourcePath) !== 'glb') {
+        siblingGlbMeta.textContent = '打开本地 GLB 后显示';
+        siblingGlbList.innerHTML = '<div class="anim-list-empty">尚无同目录列表</div>';
+        return;
+    }
+
+    if (!active.siblingGlbs) {
+        siblingGlbMeta.textContent = '正在扫描同目录 GLB…';
+        siblingGlbList.innerHTML = '<div class="anim-list-empty">扫描中</div>';
+        return;
+    }
+
+    const entries = active.siblingGlbs;
+    const otherCount = entries.filter((entry) => !entry.active).length;
+    siblingGlbMeta.textContent = `${entries.length} 个 GLB · ${otherCount} 个可切换`;
+
+    siblingGlbList.innerHTML = entries.length > 0
+        ? entries.map((entry) => `
+            <button class="sibling-glb-item${entry.active ? ' active' : ''}" type="button" data-sibling-path="${escapeHtml(entry.path)}" ${entry.active ? 'aria-current="true"' : ''}>
+                <span class="sibling-glb-name" title="${escapeHtml(entry.path)}">${escapeHtml(entry.name)}</span>
+                <span class="sibling-glb-size">${entry.active ? '当前' : formatBytes(entry.size)}</span>
+            </button>
+        `).join('')
+        : '<div class="anim-list-empty">同目录没有 GLB</div>';
 }
 
 function syncPropertyPanelCamera(): void {
@@ -7972,6 +8198,20 @@ function fileNameOfPath(path: string): string {
     const normalized = path.replaceAll('/', '\\');
     const index = normalized.lastIndexOf('\\');
     return index >= 0 ? normalized.slice(index + 1) : normalized;
+}
+
+function dirNameOfPath(path: string): string {
+    const slashIndex = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'));
+    return slashIndex >= 0 ? path.slice(0, slashIndex) : '';
+}
+
+function joinNativePath(dir: string, name: string): string {
+    const separator = dir.includes('/') && !dir.includes('\\') ? '/' : '\\';
+    return dir.endsWith('\\') || dir.endsWith('/') ? `${dir}${name}` : `${dir}${separator}${name}`;
+}
+
+function sameNativePath(a: string, b: string): boolean {
+    return a.replaceAll('/', '\\').toLocaleLowerCase() === b.replaceAll('/', '\\').toLocaleLowerCase();
 }
 
 function formatBytes(bytes: number): string {
