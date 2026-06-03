@@ -6298,6 +6298,14 @@ async function saveActiveDocument(choice: SaveChoice): Promise<void> {
                     active.siblingGlbs = undefined;
                     void scanSiblingGlbsForDocument(active.id);
                 }
+            } else {
+                const savedDir = dirNameOfPath(targetPath);
+                const activeDir = active.sourcePath ? dirNameOfPath(active.sourcePath) : '';
+                if (savedDir && activeDir && sameNativePath(savedDir, activeDir)) {
+                    siblingGlbCache.delete(savedDir);
+                    active.siblingGlbs = undefined;
+                    void scanSiblingGlbsForDocument(active.id);
+                }
             }
         } else {
             downloadName = fileNameOfPath(targetPath);
