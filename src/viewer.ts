@@ -2550,7 +2550,10 @@ export class Viewer {
         if (!clip) return;
 
         const fallback = `Clip ${this.activeClipIndex + 1}`;
-        clip.name = name.trim() || fallback;
+        const nextName = name.trim() || fallback;
+        clip.name = nextName;
+        const lazy = getLazyAnimationClipSource(clip);
+        if (lazy) setLazyAnimationClipSource(clip, { ...lazy, name: nextName });
         this.refreshAnimationClipMetas();
         this.onAnimationsChanged(this.getAnimationState());
     }

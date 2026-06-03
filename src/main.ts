@@ -2648,7 +2648,7 @@ async function ensureAnimationClipLoaded(
         if (!opts.quiet) showLoading(`正在载入动画 ${label} …`);
         try {
             const clip = await loadGLBAnimationClipFromPath(source.path, source.index);
-            if (!clip.name || !clip.name.trim()) clip.name = label;
+            clip.name = label;
             const replaced = viewer.replaceAnimationClip(index, clip, {
                 activate: opts.activate ?? true,
                 autoPlay: opts.autoPlay ?? false,
