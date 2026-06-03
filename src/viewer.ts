@@ -160,6 +160,7 @@ export type AnimationEditorState = {
     activeIndex: number;
     clipName: string;
     duration: number;
+    trackCount: number;
     tracks: AnimationTrackMeta[];
 };
 
@@ -1406,17 +1407,20 @@ export class Viewer {
                 activeIndex: this.activeClipIndex,
                 clipName: '',
                 duration: 0,
+                trackCount: 0,
                 tracks: [],
             };
         }
 
         const lazy = getLazyAnimationClipSource(clip);
+        const tracks = this.getCachedAnimationTrackMetas(clip);
         return {
             hasAnimations: true,
             activeIndex: this.activeClipIndex,
             clipName: lazy?.name || (clip.name && clip.name.trim() ? clip.name : `Clip ${this.activeClipIndex + 1}`),
             duration: lazy?.duration ?? clip.duration,
-            tracks: this.getCachedAnimationTrackMetas(clip),
+            trackCount: lazy?.tracks ?? tracks.length,
+            tracks,
         };
     }
 

@@ -3062,7 +3062,7 @@ function syncAnimationEditor(): void {
     animClipNameInput.disabled = state.activeIndex < 0;
     animClipNameInput.value = state.activeIndex >= 0 ? (state.clipName || 'Pose Action') : '未选择动画';
     animClipDuration.textContent = state.duration > 0 ? `${state.duration.toFixed(2)}s` : '—';
-    animTrackCount.textContent = String(state.tracks.length);
+    animTrackCount.textContent = String(state.trackCount);
     renderAnimationTimeline(skeletonState, viewer.getAnimationState());
     renderAnimationHistory();
     syncAnimationClipTools(viewer.getAnimationState());
