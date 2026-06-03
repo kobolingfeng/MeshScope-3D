@@ -2033,6 +2033,19 @@ function setupAnimationControls(): void {
             renderSkeletonControls(viewer.getSkeletonEditorState(), { preserveSearch: true });
             return;
         }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            const direction = event.key === 'ArrowDown' ? 1 : -1;
+            const state = viewer.getSkeletonEditorState();
+            const bones = getFilteredSkeletonBones(state);
+            if (bones.length === 0) return;
+            const current = bones.findIndex((bone) => bone.index === state.selectedBoneIndex);
+            const nextOffset = current < 0
+                ? (direction > 0 ? 0 : bones.length - 1)
+                : (current + direction + bones.length) % bones.length;
+            event.preventDefault();
+            viewer.selectBone(bones[nextOffset].index);
+            return;
+        }
         if (event.key !== 'Enter') return;
         const first = animBoneList.querySelector<HTMLButtonElement>('[data-bone-index]');
         if (!first) return;
@@ -3150,11 +3163,7 @@ function renderSkeletonControls(
     syncTransformModeButtons(state.transformMode);
     syncTransformSpaceButtons(state.transformSpace);
 
-    const query = normalizeSearchText(animBoneSearch.value);
-    let bones = state.bones.filter((bone) => {
-        const text = normalizeSearchText(`${bone.name} ${bone.parentName}`);
-        return text.includes(query);
-    });
+    let bones = getFilteredSkeletonBones(state);
     if (!options.preserveSearch && state.selectedBoneIndex >= 0 && !bones.some((bone) => bone.index === state.selectedBoneIndex)) {
         animBoneSearch.value = '';
         bones = state.bones;
@@ -3176,6 +3185,13 @@ function renderSkeletonControls(
         }).join('')
         : '<div class="animation-list-empty">没有匹配骨骼</div>';
     scrollSelectedBoneIntoView(state.selectedBoneIndex);
+}
+
+function getFilteredSkeletonBones(state: SkeletonEditorState): SkeletonEditorState['bones'] {
+    const query = normalizeSearchText(animBoneSearch.value);
+    return query
+        ? state.bones.filter((bone) => normalizeSearchText(`${bone.name} ${bone.parentName}`).includes(query))
+        : state.bones;
 }
 
 function getBoneInfluenceLabel(state: SkeletonEditorState): string {
