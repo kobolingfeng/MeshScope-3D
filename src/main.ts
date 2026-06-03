@@ -973,6 +973,21 @@ function setupOutlineAndSiblingControls(): void {
         renderSiblingGlbList();
     });
 
+    siblingGlbSearch.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            siblingGlbSearch.value = '';
+            renderSiblingGlbList();
+            return;
+        }
+        if (event.key !== 'Enter') return;
+        const active = getActiveDocument();
+        const entry = getFilteredSiblingGlbEntries(active).find((item) => !item.active);
+        if (!entry) return;
+        event.preventDefault();
+        void openSiblingGlb(entry.path);
+    });
+
     btnSiblingGlbRefresh.addEventListener('click', () => {
         void refreshActiveSiblingGlbs();
     });
@@ -6721,9 +6736,7 @@ function renderSiblingGlbList(): void {
 
     const entries = active.siblingGlbs;
     const query = normalizeSearchText(siblingGlbSearch.value);
-    const filtered = query
-        ? entries.filter((entry) => normalizeSearchText(`${entry.name} ${entry.path}`).includes(query))
-        : entries;
+    const filtered = getFilteredSiblingGlbEntries(active);
     const otherCount = entries.filter((entry) => !entry.active).length;
     const filteredOtherCount = filtered.filter((entry) => !entry.active).length;
     siblingGlbMeta.textContent = query
@@ -6740,6 +6753,14 @@ function renderSiblingGlbList(): void {
         : entries.length > 0
             ? '<div class="anim-list-empty">没有匹配 GLB</div>'
             : '<div class="anim-list-empty">同目录没有 GLB</div>';
+}
+
+function getFilteredSiblingGlbEntries(active: DocumentSession | null | undefined): SiblingGlbEntry[] {
+    const entries = active?.siblingGlbs ?? [];
+    const query = normalizeSearchText(siblingGlbSearch.value);
+    return query
+        ? entries.filter((entry) => normalizeSearchText(`${entry.name} ${entry.path}`).includes(query))
+        : entries;
 }
 
 function syncPropertyPanelCamera(): void {
