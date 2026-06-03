@@ -2877,7 +2877,8 @@ export class Viewer {
     }
 
     private ensureActiveAnimationClip(): AnimationClip | null {
-        if (this.animClips[this.activeClipIndex]) return this.animClips[this.activeClipIndex];
+        const activeClip = this.animClips[this.activeClipIndex];
+        if (activeClip && !getLazyAnimationClipSource(activeClip)) return activeClip;
         const root = this.getActiveRoot();
         if (!root) return null;
 
