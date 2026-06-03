@@ -264,6 +264,7 @@ export type ModelOutlineItem = {
     type: string;
     depth: number;
     visible: boolean;
+    effectiveVisible: boolean;
     renderable: boolean;
     mesh: boolean;
     bone: boolean;
@@ -882,26 +883,28 @@ export class Viewer {
         if (!root) return [];
 
         const items: ModelOutlineItem[] = [];
-        const visit = (node: Object3D, depth: number) => {
+        const visit = (node: Object3D, depth: number, parentVisible: boolean) => {
             const mesh = (node as Mesh).isMesh === true;
             const bone = (node as Bone).isBone === true;
             const name = getObjectDisplayName(node, items.length);
+            const effectiveVisible = parentVisible && node.visible;
             items.push({
                 id: node.uuid,
                 name,
                 type: getOutlineObjectType(node),
                 depth,
                 visible: node.visible,
+                effectiveVisible,
                 renderable: isRenderableOutlineObject(node),
                 mesh,
                 bone,
                 collision: isCollisionOutlineObjectName(name),
                 childCount: node.children.length,
             });
-            for (const child of node.children) visit(child, depth + 1);
+            for (const child of node.children) visit(child, depth + 1, effectiveVisible);
         };
 
-        visit(root, 0);
+        visit(root, 0, true);
         return items;
     }
 

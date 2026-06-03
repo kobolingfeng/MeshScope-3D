@@ -6519,7 +6519,7 @@ function renderModelOutline(): void {
     });
     const rendered = filtered.slice(0, Math.max(MODEL_OUTLINE_RENDER_BATCH, modelOutlineRenderLimit));
 
-    const visibleCount = items.filter((item) => item.visible).length;
+    const visibleCount = items.filter((item) => item.effectiveVisible).length;
     const meshCount = items.filter((item) => item.mesh).length;
     const collisionCount = items.filter((item) => item.collision).length;
     modelOutlineMeta.textContent = items.length === 0
@@ -6551,7 +6551,7 @@ function getModelOutlineFilter(): ModelOutlineFilter {
 function matchesModelOutlineFilter(item: ModelOutlineItem, filter: ModelOutlineFilter): boolean {
     if (filter === 'renderable') return item.renderable;
     if (filter === 'collision') return item.collision;
-    if (filter === 'hidden') return !item.visible;
+    if (filter === 'hidden') return !item.effectiveVisible;
     if (filter === 'bones') return item.bone;
     return true;
 }
@@ -6559,7 +6559,7 @@ function matchesModelOutlineFilter(item: ModelOutlineItem, filter: ModelOutlineF
 function renderModelOutlineItem(item: ModelOutlineItem): string {
     const classes = [
         'model-outline-item',
-        item.visible ? '' : 'is-hidden',
+        item.effectiveVisible ? '' : 'is-hidden',
         item.collision ? 'is-collision' : '',
     ].filter(Boolean).join(' ');
     const typeLabel = item.collision ? '碰撞' : item.bone ? '骨骼' : item.renderable ? item.type : `${item.type} · ${item.childCount}`;
