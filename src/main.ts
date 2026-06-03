@@ -40,6 +40,7 @@ type SiblingGlbEntry = {
     size: number;
     active: boolean;
 };
+type ModelOutlineFilter = 'all' | 'renderable' | 'collision' | 'hidden' | 'bones';
 type AnimationEasingName = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'custom';
 type UvSelectionMode = 'vertex' | 'edge' | 'face';
 type UvEdgeState = {
@@ -228,8 +229,10 @@ const propDocCount = $('prop-doc-count');
 const propBounds = $('prop-bounds');
 const propCenter = $('prop-center');
 const modelOutlineSearch = $<HTMLInputElement>('model-outline-search');
+const modelOutlineFilter = $<HTMLSelectElement>('model-outline-filter');
 const btnOutlineShowAll = $<HTMLButtonElement>('btn-outline-show-all');
 const btnOutlineHideCollision = $<HTMLButtonElement>('btn-outline-hide-collision');
+const btnOutlineShowMore = $<HTMLButtonElement>('btn-outline-show-more');
 const modelOutlineMeta = $('model-outline-meta');
 const modelOutlineList = $('model-outline-list');
 const siblingGlbMeta = $('sibling-glb-meta');
@@ -471,6 +474,7 @@ const AUTO_KEY_SCOPE_LABELS: Record<AutoKeyframeScope, string> = {
     chain: '子链',
     all: '全身',
 };
+const MODEL_OUTLINE_RENDER_BATCH = 600;
 
 let layoutState = loadLayout();
 let documents: DocumentSession[] = [createSampleDocument()];
@@ -482,6 +486,7 @@ let lastPropertySyncTs = 0;
 let nativeOpenQueue = Promise.resolve();
 let siblingGlbScanSeq = 0;
 const siblingGlbCache = new Map<string, SiblingGlbEntry[]>();
+let modelOutlineRenderLimit = MODEL_OUTLINE_RENDER_BATCH;
 let selectedTextureSlot: TextureSlotId | null = null;
 let currentTextureSlotState: TextureSlotState | null = null;
 let currentUvEditorState: UvEditorState | null = null;
@@ -911,6 +916,17 @@ function setupInspector(): void {
 
 function setupOutlineAndSiblingControls(): void {
     modelOutlineSearch.addEventListener('input', () => {
+        modelOutlineRenderLimit = MODEL_OUTLINE_RENDER_BATCH;
+        renderModelOutline();
+    });
+
+    modelOutlineFilter.addEventListener('change', () => {
+        modelOutlineRenderLimit = MODEL_OUTLINE_RENDER_BATCH;
+        renderModelOutline();
+    });
+
+    btnOutlineShowMore.addEventListener('click', () => {
+        modelOutlineRenderLimit += MODEL_OUTLINE_RENDER_BATCH;
         renderModelOutline();
     });
 
@@ -6463,19 +6479,24 @@ function syncPropertyPanel(): void {
 function renderModelOutline(): void {
     const items = viewer.getModelOutline();
     const query = normalizeSearchText(modelOutlineSearch.value);
-    const filtered = query
-        ? items.filter((item) => normalizeSearchText(`${item.name} ${item.type} ${item.collision ? 'collision 碰撞' : ''}`).includes(query))
-        : items;
+    const filter = getModelOutlineFilter();
+    const filtered = items.filter((item) => {
+        if (!matchesModelOutlineFilter(item, filter)) return false;
+        if (!query) return true;
+        return normalizeSearchText(`${item.name} ${item.type} ${item.collision ? 'collision 碰撞' : ''}`).includes(query);
+    });
+    const rendered = filtered.slice(0, Math.max(MODEL_OUTLINE_RENDER_BATCH, modelOutlineRenderLimit));
 
     const visibleCount = items.filter((item) => item.visible).length;
     const meshCount = items.filter((item) => item.mesh).length;
     const collisionCount = items.filter((item) => item.collision).length;
     modelOutlineMeta.textContent = items.length === 0
         ? '未加载'
-        : `${visibleCount}/${items.length} 可见 · ${meshCount} 网格 · ${collisionCount} 疑似碰撞`;
+        : `${visibleCount}/${items.length} 可见 · ${meshCount} 网格 · ${collisionCount} 疑似碰撞 · 显示 ${rendered.length}/${filtered.length}`;
 
     btnOutlineShowAll.disabled = items.length === 0;
     btnOutlineHideCollision.disabled = collisionCount === 0;
+    btnOutlineShowMore.hidden = filtered.length <= rendered.length;
 
     if (items.length === 0) {
         modelOutlineList.innerHTML = '<div class="anim-list-empty">尚无模型大纲</div>';
@@ -6487,7 +6508,20 @@ function renderModelOutline(): void {
         return;
     }
 
-    modelOutlineList.innerHTML = filtered.map(renderModelOutlineItem).join('');
+    modelOutlineList.innerHTML = rendered.map(renderModelOutlineItem).join('');
+}
+
+function getModelOutlineFilter(): ModelOutlineFilter {
+    const value = modelOutlineFilter.value;
+    return isModelOutlineFilter(value) ? value : 'all';
+}
+
+function matchesModelOutlineFilter(item: ModelOutlineItem, filter: ModelOutlineFilter): boolean {
+    if (filter === 'renderable') return item.renderable;
+    if (filter === 'collision') return item.collision;
+    if (filter === 'hidden') return !item.visible;
+    if (filter === 'bones') return item.bone;
+    return true;
 }
 
 function renderModelOutlineItem(item: ModelOutlineItem): string {
@@ -8190,6 +8224,14 @@ function isInspectorTab(value: unknown): value is InspectorTab {
 
 function isContentMode(value: unknown): value is ContentMode {
     return value === 'model' || value === 'uv';
+}
+
+function isModelOutlineFilter(value: unknown): value is ModelOutlineFilter {
+    return value === 'all'
+        || value === 'renderable'
+        || value === 'collision'
+        || value === 'hidden'
+        || value === 'bones';
 }
 
 function isUvSelectionMode(value: unknown): value is UvSelectionMode {

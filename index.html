@@ -404,8 +404,16 @@
                                 <button id="btn-outline-show-all" class="mini-btn" type="button" title="仅恢复预览显示，不修改文件">全显</button>
                                 <button id="btn-outline-hide-collision" class="mini-btn" type="button" title="仅预览隐藏，不修改文件">隐藏碰撞</button>
                             </div>
+                            <select id="model-outline-filter" class="select-input" aria-label="模型大纲过滤">
+                                <option value="all">全部对象</option>
+                                <option value="renderable">可渲染对象</option>
+                                <option value="collision">疑似碰撞体</option>
+                                <option value="hidden">已隐藏对象</option>
+                                <option value="bones">骨骼节点</option>
+                            </select>
                             <div class="outline-meta" id="model-outline-meta">未加载</div>
                             <div class="model-outline-list" id="model-outline-list" role="tree" aria-label="GLB 模型大纲"></div>
+                            <button id="btn-outline-show-more" class="mini-btn outline-show-more" type="button" hidden>显示更多</button>
                         </div>
                     </details>
 

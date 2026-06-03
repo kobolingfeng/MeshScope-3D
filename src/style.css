@@ -857,6 +857,11 @@ summary:focus-visible,
     padding: 0 8px;
 }
 
+.outline-show-more {
+    width: 100%;
+    justify-content: center;
+}
+
 .outline-meta {
     color: var(--text-2);
     font-size: 11.5px;
