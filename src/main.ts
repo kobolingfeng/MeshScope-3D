@@ -6042,16 +6042,16 @@ function createNativeLoadMessage(name: string, path: string, size: number): stri
     return `正在加载 ${name} …`;
 }
 
-async function scanSiblingGlbsForDocument(documentId: string): Promise<void> {
+async function scanSiblingGlbsForDocument(documentId: string): Promise<boolean> {
     const document = documents.find((item) => item.id === documentId);
-    if (!document) return;
+    if (!document) return false;
 
     const sourcePath = document.sourcePath;
     if (!inNative || !sourcePath || extOf(sourcePath) !== 'glb') {
         document.siblingGlbDir = undefined;
         document.siblingGlbs = undefined;
         if (document.id === activeDocumentId) renderSiblingGlbList();
-        return;
+        return false;
     }
 
     const dir = dirNameOfPath(sourcePath);
@@ -6059,7 +6059,7 @@ async function scanSiblingGlbsForDocument(documentId: string): Promise<void> {
         document.siblingGlbDir = undefined;
         document.siblingGlbs = [];
         if (document.id === activeDocumentId) renderSiblingGlbList();
-        return;
+        return false;
     }
 
     document.siblingGlbDir = dir;
@@ -6067,7 +6067,7 @@ async function scanSiblingGlbsForDocument(documentId: string): Promise<void> {
     if (cached) {
         document.siblingGlbs = markActiveSiblingGlbEntries(cached, sourcePath);
         if (document.id === activeDocumentId) renderSiblingGlbList();
-        return;
+        return true;
     }
 
     document.siblingGlbs = undefined;
@@ -6088,18 +6088,20 @@ async function scanSiblingGlbsForDocument(documentId: string): Promise<void> {
 
         siblingGlbCache.set(dir, glbs);
         const latest = documents.find((item) => item.id === documentId);
-        if (!latest || latest.siblingGlbDir !== dir) return;
+        if (!latest || latest.siblingGlbDir !== dir) return false;
         latest.siblingGlbs = markActiveSiblingGlbEntries(glbs, latest.sourcePath ?? sourcePath);
         if (scanId === siblingGlbScanSeq || latest.id === activeDocumentId) renderSiblingGlbList();
+        return true;
     } catch (error) {
         console.warn('scanSiblingGlbsForDocument failed', error);
         const latest = documents.find((item) => item.id === documentId);
-        if (!latest || latest.siblingGlbDir !== dir) return;
+        if (!latest || latest.siblingGlbDir !== dir) return false;
         latest.siblingGlbs = [];
         if (latest.id === activeDocumentId) {
             renderSiblingGlbList();
             showToast('扫描同目录 GLB 失败', 'error');
         }
+        return false;
     }
 }
 
@@ -6135,8 +6137,8 @@ async function refreshActiveSiblingGlbs(): Promise<void> {
     siblingGlbCache.delete(dir);
     active.siblingGlbs = undefined;
     renderSiblingGlbList();
-    await scanSiblingGlbsForDocument(active.id);
-    showToast('同目录 GLB 已刷新', 'success');
+    const refreshed = await scanSiblingGlbsForDocument(active.id);
+    if (refreshed) showToast('同目录 GLB 已刷新', 'success');
 }
 
 function showModelLoadNotice(model: Object3D): void {
