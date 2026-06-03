@@ -2753,7 +2753,8 @@ export class Viewer {
         this.animClips = collected;
         this.refreshAnimationClipMetas();
         this.activeAction = null;
-        this.activeClipIndex = collected.findIndex((clip) => !getLazyAnimationClipSource(clip));
+        const firstReadyClipIndex = collected.findIndex((clip) => !getLazyAnimationClipSource(clip));
+        this.activeClipIndex = firstReadyClipIndex >= 0 ? firstReadyClipIndex : 0;
         this.animationPlaying = false;
         this.animationFinished = false;
         this.lastReportedTime = -1;
