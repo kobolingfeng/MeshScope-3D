@@ -38,6 +38,7 @@ import {
     SRGBColorSpace,
     Scene,
     SkeletonHelper,
+    Sphere,
     SphereGeometry,
     Texture,
     Vector2,
@@ -52,6 +53,7 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 const DEFAULT_BONE_ROTATION_STEP_RADIANS = Math.PI / 90;
 const DEFAULT_BONE_TRANSLATION_STEP_RATIO = 0.005;
 const BONE_HIGHLIGHT_AXIS = new Vector3(0, 1, 0);
+const BONE_OVERLAY_BOUNDS_RADIUS = 1e8;
 
 export type MaterialEditMode = 'original' | 'solid' | 'xray';
 export type TextureSlotId =
@@ -2995,11 +2997,14 @@ export class Viewer {
                 this.boneLines.set(bone, lines);
                 this.boneHighlightMeshes.set(bone, highlights);
                 for (let index = 0; index < segmentCount; index += 1) {
+                    const segmentGeometry = new BufferGeometry().setFromPoints([new Vector3(), new Vector3()]);
+                    segmentGeometry.boundingSphere = new Sphere(new Vector3(), BONE_OVERLAY_BOUNDS_RADIUS);
                     const segmentLine = new Line(
-                        new BufferGeometry().setFromPoints([new Vector3(), new Vector3()]),
+                        segmentGeometry,
                         this.boneLineMaterial,
                     );
                     segmentLine.name = `__bone_line__${bone.name}_${index}`;
+                    segmentLine.frustumCulled = false;
                     segmentLine.renderOrder = 18;
                     segmentLine.visible = this.skeletonVisible;
                     segmentLine.userData.__boneLine = true;
@@ -3009,6 +3014,7 @@ export class Viewer {
 
                     const highlight = new Mesh(this.boneHighlightGeometry, this.selectedBoneHighlightMaterial);
                     highlight.name = `__bone_highlight__${bone.name}_${index}`;
+                    highlight.frustumCulled = false;
                     highlight.renderOrder = 19;
                     highlight.visible = false;
                     highlight.userData.__boneLine = true;
@@ -3076,7 +3082,6 @@ export class Viewer {
                 positions.setXYZ(0, start.x, start.y, start.z);
                 positions.setXYZ(1, end.x, end.y, end.z);
                 positions.needsUpdate = true;
-                line.geometry.computeBoundingSphere();
                 line.material = this.getBoneLineMaterial(bone);
                 line.visible = this.skeletonVisible;
 
