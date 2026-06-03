@@ -2627,12 +2627,15 @@ async function ensureAnimationClipLoaded(
 ): Promise<boolean> {
     const source = viewer.getLazyAnimationClipSource(index);
     if (!source) return true;
+    const requestDocumentId = activeDocumentId;
 
     const key = `${source.path}\0${source.index}`;
     const existing = lazyAnimationLoads.get(key);
     if (existing) {
         const loaded = await existing;
-        if (loaded && (opts.activate ?? true)) {
+        if (!loaded) return false;
+        if (!isLazyAnimationLoadTargetCurrent(requestDocumentId, index, source, { allowLoaded: true })) return false;
+        if (opts.activate ?? true) {
             viewer.selectAnimationClip(index, { autoPlay: opts.autoPlay ?? false });
             selectedKeyframeTimes = [];
             if (!opts.quiet) {
@@ -2648,6 +2651,9 @@ async function ensureAnimationClipLoaded(
         if (!opts.quiet) showLoading(`正在载入动画 ${label} …`);
         try {
             const clip = await loadGLBAnimationClipFromPath(source.path, source.index);
+            if (!isLazyAnimationLoadTargetCurrent(requestDocumentId, index, source, { allowLoaded: false })) {
+                return false;
+            }
             clip.name = label;
             const replaced = viewer.replaceAnimationClip(index, clip, {
                 activate: opts.activate ?? true,
@@ -2677,6 +2683,18 @@ async function ensureAnimationClipLoaded(
 
     lazyAnimationLoads.set(key, task);
     return task;
+}
+
+function isLazyAnimationLoadTargetCurrent(
+    documentId: string,
+    index: number,
+    source: { path: string; index: number },
+    options: { allowLoaded: boolean },
+): boolean {
+    if (activeDocumentId !== documentId) return false;
+    const currentSource = viewer.getLazyAnimationClipSource(index);
+    if (!currentSource) return options.allowLoaded;
+    return currentSource.index === source.index && sameNativePath(currentSource.path, source.path);
 }
 
 function createRestPoseClip(): void {
