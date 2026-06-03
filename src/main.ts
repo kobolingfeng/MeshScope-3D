@@ -5228,26 +5228,36 @@ function runTextureEdit(label: string, apply: () => void): void {
 function runAnimationEdit(label: string, apply: () => void): void {
     flushBoneStepUndoTransaction();
     const snapshot = viewer.captureAnimationSnapshot();
-    const librarySnapshot = snapshot ? null : viewer.captureAnimationLibrarySnapshot();
+    const librarySnapshot = viewer.captureAnimationLibrarySnapshot();
     apply();
     const current = viewer.captureAnimationSnapshot();
-    if (snapshot && current && !areAnimationSnapshotsEqual(snapshot, current)) {
+    const currentLibrary = viewer.captureAnimationLibrarySnapshot();
+    const changedLibrary = !areAnimationLibrarySnapshotsEqual(librarySnapshot, currentLibrary);
+    const structuralChange = changedLibrary && (
+        !snapshot
+        || !current
+        || snapshot.clipIndex !== current.clipIndex
+        || librarySnapshot.activeIndex !== currentLibrary.activeIndex
+        || librarySnapshot.clips.length !== currentLibrary.clips.length
+    );
+    if (structuralChange) {
+        pushUndoEntry({
+            kind: 'animation-library',
+            label,
+            snapshot: librarySnapshot,
+        });
+    } else if (snapshot && current && !areAnimationSnapshotsEqual(snapshot, current)) {
         pushUndoEntry({
             kind: 'animation',
             label,
             snapshot,
         });
-    } else if (librarySnapshot) {
-        const currentLibrary = viewer.captureAnimationLibrarySnapshot();
-        if (!areAnimationLibrarySnapshotsEqual(librarySnapshot, currentLibrary)) {
-            pushUndoEntry({
-                kind: 'animation-library',
-                label,
-                snapshot: librarySnapshot,
-            });
-        } else if (!snapshot && current) {
-            markActiveDocumentDirty();
-        }
+    } else if (changedLibrary) {
+        pushUndoEntry({
+            kind: 'animation-library',
+            label,
+            snapshot: librarySnapshot,
+        });
     } else if (!snapshot && current) {
         markActiveDocumentDirty();
     }
@@ -5278,7 +5288,7 @@ function beginBonePoseUndoTransaction(): void {
     const animationSnapshot = viewer.captureAnimationSnapshot();
     animationPoseUndoDraft.snapshot = snapshot;
     animationPoseUndoDraft.animationSnapshot = animationSnapshot;
-    animationPoseUndoDraft.animationLibrarySnapshot = animationSnapshot ? null : viewer.captureAnimationLibrarySnapshot();
+    animationPoseUndoDraft.animationLibrarySnapshot = viewer.captureAnimationLibrarySnapshot();
     animationPoseUndoDraft.label = getBonePoseEditLabel();
     refreshButtons();
 }
@@ -5289,18 +5299,33 @@ function commitBonePoseUndoTransaction(): void {
     const animationSnapshot = animationPoseUndoDraft.animationSnapshot;
     const animationLibrarySnapshot = animationPoseUndoDraft.animationLibrarySnapshot;
     const currentAnimation = viewer.captureAnimationSnapshot();
+    const currentLibrary = viewer.captureAnimationLibrarySnapshot();
+    const changedLibrary = animationLibrarySnapshot
+        ? !areAnimationLibrarySnapshotsEqual(animationLibrarySnapshot, currentLibrary)
+        : false;
+    const structuralChange = changedLibrary && (
+        !animationSnapshot
+        || !currentAnimation
+        || animationSnapshot.clipIndex !== currentAnimation.clipIndex
+        || animationLibrarySnapshot!.activeIndex !== currentLibrary.activeIndex
+        || animationLibrarySnapshot!.clips.length !== currentLibrary.clips.length
+    );
     let committedAnimationUndo = false;
-    if (animationSnapshot && currentAnimation && !areAnimationSnapshotsEqual(animationSnapshot, currentAnimation)) {
+    if (structuralChange && animationLibrarySnapshot) {
+        pushUndoEntry({
+            kind: 'animation-library',
+            label,
+            snapshot: animationLibrarySnapshot,
+        });
+        committedAnimationUndo = true;
+    } else if (animationSnapshot && currentAnimation && !areAnimationSnapshotsEqual(animationSnapshot, currentAnimation)) {
         pushUndoEntry({
             kind: 'animation',
             label,
             snapshot: animationSnapshot,
         });
         committedAnimationUndo = true;
-    } else if (
-        animationLibrarySnapshot
-        && !areAnimationLibrarySnapshotsEqual(animationLibrarySnapshot, viewer.captureAnimationLibrarySnapshot())
-    ) {
+    } else if (animationLibrarySnapshot && changedLibrary) {
         pushUndoEntry({
             kind: 'animation-library',
             label,
