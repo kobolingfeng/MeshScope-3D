@@ -3491,9 +3491,10 @@ function getTimelineStripRenderKey(
     const duration = playbackState.duration;
     const width = getTimelineContentWidth(duration);
     const viewport = getTimelineViewportRange(duration, width);
+    const selectedTimeKeys = getSelectedKeyframeTimeKeySet();
     const keyframes = getTimelineVisibleMarkers(skeletonState)
         .filter((marker) => {
-            const displayTime = isKeyframeTimeSelected(marker.time)
+            const displayTime = isKeyframeTimeSelected(marker.time, selectedTimeKeys)
                 ? clamp(marker.time + timelineRetimePreviewDelta, 0, duration)
                 : marker.time;
             return isTimelineTimeInViewport(displayTime, viewport);
@@ -3537,11 +3538,12 @@ function renderAnimationTimelineNow(
         return;
     }
     const visibleMarkers = getTimelineVisibleMarkers(skeletonState);
-    const markerTimes = visibleMarkers.map((marker) => marker.time);
-    selectedKeyframeTimes = selectedKeyframeTimes.filter((time) => markerTimes.some((markerTime) => nearlyEqualTimeForUi(time, markerTime)));
+    const markerTimeKeys = new Set(visibleMarkers.map((marker) => getKeyframeTimeKey(marker.time)));
+    selectedKeyframeTimes = selectedKeyframeTimes.filter((time) => markerTimeKeys.has(getKeyframeTimeKey(time)));
     updateTimelineSelectionSummary();
 
     const viewport = getTimelineViewportRange(duration, width);
+    const selectedTimeKeys = getSelectedKeyframeTimeKeySet();
     const ticks = buildTimelineTicks(duration, width, viewport).map((tick) => {
         const left = clamp((tick.time / duration) * 100, 0, 100);
         return `
@@ -3552,7 +3554,7 @@ function renderAnimationTimelineNow(
     }).join('');
 
     const markers = visibleMarkers.map((marker) => {
-            const selected = isKeyframeTimeSelected(marker.time);
+            const selected = isKeyframeTimeSelected(marker.time, selectedTimeKeys);
             const displayTime = selected
                 ? clamp(marker.time + timelineRetimePreviewDelta, 0, duration)
                 : marker.time;
@@ -3979,6 +3981,10 @@ function setSelectedKeyframeTimes(times: number[]): void {
     updateStatusChips();
 }
 
+function getSelectedKeyframeTimeKeySet(): Set<string> {
+    return new Set(selectedKeyframeTimes.map(getKeyframeTimeKey));
+}
+
 function syncViewerKeyframeSnap(): void {
     viewer.setKeyframeSnapStep(timelineSnapEnabled ? 1 / timelineFps : null);
 }
@@ -3992,8 +3998,12 @@ function toggleSelectedKeyframeTime(time: number): void {
     }
 }
 
-function isKeyframeTimeSelected(time: number): boolean {
-    return selectedKeyframeTimes.some((item) => nearlyEqualTimeForUi(item, time));
+function isKeyframeTimeSelected(time: number, selectedKeys = getSelectedKeyframeTimeKeySet()): boolean {
+    return selectedKeys.has(getKeyframeTimeKey(time));
+}
+
+function getKeyframeTimeKey(time: number): string {
+    return Number(time).toFixed(4);
 }
 
 function nearlyEqualTimeForUi(a: number, b: number): boolean {
