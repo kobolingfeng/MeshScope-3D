@@ -1724,23 +1724,23 @@ export class Viewer {
         return changed;
     }
 
-    moveSelectedBoneKeyframesAtTimes(fromTimes: number[], toTimes: number[]): void {
-        if (!this.selectedBone) return;
-        this.moveKeyframesAtTimesInternal(fromTimes, toTimes, this.selectedBone);
+    moveSelectedBoneKeyframesAtTimes(fromTimes: number[], toTimes: number[]): boolean {
+        if (!this.selectedBone) return false;
+        return this.moveKeyframesAtTimesInternal(fromTimes, toTimes, this.selectedBone);
     }
 
-    moveKeyframesAtTimes(fromTimes: number[], toTimes: number[]): void {
-        this.moveKeyframesAtTimesInternal(fromTimes, toTimes, null);
+    moveKeyframesAtTimes(fromTimes: number[], toTimes: number[]): boolean {
+        return this.moveKeyframesAtTimesInternal(fromTimes, toTimes, null);
     }
 
-    private moveKeyframesAtTimesInternal(fromTimes: number[], toTimes: number[], bone: Bone | null): void {
+    private moveKeyframesAtTimesInternal(fromTimes: number[], toTimes: number[], bone: Bone | null): boolean {
         const clip = this.animClips[this.activeClipIndex];
-        if (!clip || fromTimes.length === 0 || toTimes.length === 0) return;
+        if (!clip || fromTimes.length === 0 || toTimes.length === 0) return false;
 
         const moves = fromTimes
             .map((from, index) => ({ from, to: toTimes[index] ?? from }))
             .filter((move) => Number.isFinite(move.from) && Number.isFinite(move.to) && !nearlyEqualTime(move.from, move.to));
-        if (moves.length === 0) return;
+        if (moves.length === 0) return false;
 
         let changed = false;
         clip.tracks = clip.tracks.map((track) => {
@@ -1749,13 +1749,14 @@ export class Viewer {
             return nextTrack;
         });
 
-        if (changed) {
-            const maxMovedTime = moves.reduce((max, move) => Math.max(max, move.to), clip.duration);
-            clip.duration = Math.max(clip.duration, maxMovedTime);
-            this.refreshAnimationClipMetas();
-            this.refreshActiveAnimationAfterEdit(this.activeClipIndex);
-            this.onSkeletonChanged(this.getSkeletonEditorState());
-        }
+        if (!changed) return false;
+
+        const maxMovedTime = moves.reduce((max, move) => Math.max(max, move.to), clip.duration);
+        clip.duration = Math.max(clip.duration, maxMovedTime);
+        this.refreshAnimationClipMetas();
+        this.refreshActiveAnimationAfterEdit(this.activeClipIndex);
+        this.onSkeletonChanged(this.getSkeletonEditorState());
+        return true;
     }
 
     getAnimationClipsForExport(options: { scope?: 'all' | 'current' } = {}): AnimationClip[] {

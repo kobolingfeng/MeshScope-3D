@@ -1783,9 +1783,14 @@ function nudgeSelectedTimelineKeyframes(direction: 1 | -1): boolean {
     ));
     if (fromTimes.every((time, index) => nearlyEqualTimeForUi(time, toTimes[index] ?? time))) return false;
 
+    let changed = false;
     runAnimationEdit(direction > 0 ? '右移关键帧' : '左移关键帧', () => {
-        moveTimelineKeyframesAtTimes(fromTimes, toTimes);
+        changed = moveTimelineKeyframesAtTimes(fromTimes, toTimes);
     });
+    if (!changed) {
+        showToast('没有匹配的关键帧可移动', 'info');
+        return false;
+    }
     setSelectedKeyframeTimes(toTimes);
     viewer.seekAnimation(direction > 0 ? Math.max(...toTimes) : Math.min(...toTimes));
     renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
@@ -2811,9 +2816,14 @@ function snapSelectedTimelineKeyframesToFrames(): void {
         return;
     }
 
+    let changed = false;
     runAnimationEdit('吸附关键帧到整帧', () => {
-        moveTimelineKeyframesAtTimes(fromTimes, toTimes);
+        changed = moveTimelineKeyframesAtTimes(fromTimes, toTimes);
     });
+    if (!changed) {
+        showToast('没有匹配的关键帧可吸附', 'info');
+        return;
+    }
     setSelectedKeyframeTimes(toTimes);
     if (selectedKeyframeTimes.length > 0) viewer.seekAnimation(selectedKeyframeTimes[0]);
     renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
@@ -2841,9 +2851,14 @@ function reverseSelectedTimelineKeyframes(): void {
     }
 
     const toTimes = fromTimes.map((time) => Number((start + end - time).toFixed(4)));
+    let changed = false;
     runAnimationEdit('反转选中关键帧', () => {
-        moveTimelineKeyframesAtTimes(fromTimes, toTimes);
+        changed = moveTimelineKeyframesAtTimes(fromTimes, toTimes);
     });
+    if (!changed) {
+        showToast('没有匹配的关键帧可反转', 'info');
+        return;
+    }
     setSelectedKeyframeTimes(toTimes);
     if (selectedKeyframeTimes.length > 0) viewer.seekAnimation(selectedKeyframeTimes[0]);
     renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
@@ -2872,9 +2887,14 @@ function scaleSelectedTimelineKeyframes(): void {
     const fromTimes = [...selectedKeyframeTimes];
     const start = Math.min(...fromTimes);
     const toTimes = fromTimes.map((time) => snapTimelineTimeOpen(start + (time - start) * factor));
+    let changed = false;
     runAnimationEdit('拉伸选中关键帧', () => {
-        moveTimelineKeyframesAtTimes(fromTimes, toTimes);
+        changed = moveTimelineKeyframesAtTimes(fromTimes, toTimes);
     });
+    if (!changed) {
+        showToast('没有匹配的关键帧可拉伸', 'info');
+        return;
+    }
     setSelectedKeyframeTimes(toTimes);
     if (selectedKeyframeTimes.length > 0) viewer.seekAnimation(selectedKeyframeTimes[0]);
     setNumericPairValue(animTimeScaleRange, animTimeScaleInput, 1);
@@ -3442,9 +3462,10 @@ function getTimelineVisibleMarkers(skeletonState: SkeletonEditorState): Skeleton
         : skeletonState.keyframes;
 }
 
-function moveTimelineKeyframesAtTimes(fromTimes: number[], toTimes: number[]): void {
-    if (timelineSelectedBoneOnly) viewer.moveSelectedBoneKeyframesAtTimes(fromTimes, toTimes);
-    else viewer.moveKeyframesAtTimes(fromTimes, toTimes);
+function moveTimelineKeyframesAtTimes(fromTimes: number[], toTimes: number[]): boolean {
+    return timelineSelectedBoneOnly
+        ? viewer.moveSelectedBoneKeyframesAtTimes(fromTimes, toTimes)
+        : viewer.moveKeyframesAtTimes(fromTimes, toTimes);
 }
 
 function deleteTimelineKeyframesAtTimes(times: number[]): boolean {
@@ -3641,12 +3662,17 @@ function handleTimelinePointerUp(event: PointerEvent): void {
         if (moved && startTimes.length > 0) {
             const delta = rawEnd - rawStart;
             const targetTimes = startTimes.map((time) => snapTimelineTimeOpen(time + delta));
+            let changed = false;
             runAnimationEdit('移动关键帧', () => {
-                moveTimelineKeyframesAtTimes(startTimes, targetTimes);
+                changed = moveTimelineKeyframesAtTimes(startTimes, targetTimes);
             });
-            setSelectedKeyframeTimes(targetTimes);
-            if (selectedKeyframeTimes.length > 0) viewer.seekAnimation(selectedKeyframeTimes[0]);
-            showToast(`已移动 ${selectedKeyframeTimes.length} 个关键帧`, 'success');
+            if (changed) {
+                setSelectedKeyframeTimes(targetTimes);
+                if (selectedKeyframeTimes.length > 0) viewer.seekAnimation(selectedKeyframeTimes[0]);
+                showToast(`已移动 ${selectedKeyframeTimes.length} 个关键帧`, 'success');
+            } else {
+                showToast('没有匹配的关键帧可移动', 'info');
+            }
         } else {
             setSelectedKeyframeTimes([markerTime]);
             viewer.seekAnimation(markerTime);
