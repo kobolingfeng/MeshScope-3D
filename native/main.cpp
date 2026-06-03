@@ -418,6 +418,7 @@ struct PreviewCacheFile {
 
 static void cleanup_preview_cache_dir(
     const std::wstring& cacheDir,
+    const std::wstring& keepPath = L"",
     size_t maxFiles = 512,
     std::uintmax_t maxBytes = 2ull * 1024ull * 1024ull * 1024ull
 ) {
@@ -447,15 +448,23 @@ static void cleanup_preview_cache_dir(
         return a.stamp < b.stamp;
     });
 
-    size_t removed = 0;
+    size_t remaining = files.size();
+    size_t cursor = 0;
     while (
-        removed < files.size()
-        && (files.size() - removed > maxFiles || (totalBytes > maxBytes && files.size() - removed > 1))
+        cursor < files.size()
+        && (remaining > maxFiles || (totalBytes > maxBytes && remaining > 1))
     ) {
+        if (!keepPath.empty() && files[cursor].path.wstring() == keepPath) {
+            ++cursor;
+            continue;
+        }
         std::error_code removeEc;
-        fspath::remove(files[removed].path, removeEc);
-        if (!removeEc && totalBytes >= files[removed].size) totalBytes -= files[removed].size;
-        ++removed;
+        fspath::remove(files[cursor].path, removeEc);
+        if (!removeEc) {
+            if (totalBytes >= files[cursor].size) totalBytes -= files[cursor].size;
+            --remaining;
+        }
+        ++cursor;
     }
 }
 
@@ -1100,7 +1109,7 @@ static json create_glb_preview_file(
         std::lock_guard<std::mutex> lock(g_localFileTokensMutex);
         g_localFileTokens[token] = previewPath;
     }
-    cleanup_preview_cache_dir(cacheDir);
+    cleanup_preview_cache_dir(cacheDir, previewPath);
 
     const auto urlProtocol = protocol == "https:" ? std::string{"https"} : std::string{"http"};
     return {
