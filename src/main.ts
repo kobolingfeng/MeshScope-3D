@@ -1548,7 +1548,7 @@ function setupKeyboardShortcuts(): void {
             const direction = key === ']' ? 1 : -1;
             const frames = event.shiftKey ? 10 : 1;
             const nextTime = clamp(state.time + direction * frames / timelineFps, 0, state.duration);
-            viewer.seekAnimation(snapTimelineTimeToFrame(nextTime, state.duration));
+            void seekAnimationWithLazyLoad(snapTimelineTimeToFrame(nextTime, state.duration));
             return;
         }
 
@@ -1695,13 +1695,13 @@ function setupKeyboardShortcuts(): void {
         if (key === 'Home') {
             if (!state.hasAnimations) return;
             event.preventDefault();
-            viewer.seekAnimation(0);
+            void seekAnimationWithLazyLoad(0);
             return;
         }
         if (key === 'End') {
             if (!state.hasAnimations) return;
             event.preventDefault();
-            viewer.seekAnimation(state.duration);
+            void seekAnimationWithLazyLoad(state.duration);
             return;
         }
 
@@ -2373,7 +2373,7 @@ function setupAnimationControls(): void {
         if (animTimeRangeSyncing) return;
         const time = snapTimelineTime(parseFloat(animTimeRange.value), viewer.getAnimationState().duration);
         if (!Number.isFinite(time)) return;
-        viewer.seekAnimation(time);
+        void seekAnimationWithLazyLoad(time);
     });
 
     const finishScrub = () => {
@@ -2606,6 +2606,16 @@ async function selectAdjacentAnimationClip(direction: 1 | -1): Promise<void> {
         const clip = nextState.clips.find((item) => item.index === nextIndex);
         showToast(`已切换动画: ${clip?.name || `Clip ${nextIndex + 1}`}`, 'success');
     }
+}
+
+async function seekAnimationWithLazyLoad(time: number): Promise<void> {
+    const state = viewer.getAnimationState();
+    if (!state.hasAnimations || state.activeIndex < 0) return;
+    if (viewer.getLazyAnimationClipSource(state.activeIndex)) {
+        const loaded = await ensureAnimationClipLoaded(state.activeIndex, { autoPlay: false });
+        if (!loaded) return;
+    }
+    viewer.seekAnimation(time);
 }
 
 async function ensureAnimationClipLoaded(
