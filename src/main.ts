@@ -2021,7 +2021,10 @@ function setupAnimationControls(): void {
     });
 
     btnCopyClipKeys.addEventListener('click', () => {
-        copyClipKeyframesAt(viewer.getAnimationState().activeIndex);
+        const index = viewer.getAnimationState().activeIndex;
+        void ensureAnimationClipLoaded(index, { autoPlay: false }).then((loaded) => {
+            if (loaded) copyClipKeyframesAt(index);
+        });
     });
 
     btnPasteClipKeys.addEventListener('click', () => {
