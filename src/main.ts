@@ -2364,6 +2364,9 @@ function setupAnimationControls(): void {
     });
 
     animTimelineScroll.addEventListener('wheel', handleTimelineWheel, { passive: false });
+    animTimelineScroll.addEventListener('scroll', () => {
+        renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
+    }, { passive: true });
     animKeyframeStrip.addEventListener('click', handleTimelineClick);
     animKeyframeStrip.addEventListener('pointerdown', handleTimelinePointerDown);
     animKeyframeStrip.addEventListener('pointermove', handleTimelinePointerMove);
@@ -3452,6 +3455,8 @@ function syncBoneSolverModeButtons(ikEnabled: boolean): void {
 
 let timelineRenderRaf = 0;
 let timelineStripRenderKey = '';
+const TIMELINE_RENDER_OVERSCAN_PX = 520;
+const TIMELINE_SCROLL_BUCKET_PX = 180;
 
 function renderAnimationTimeline(
     skeletonState: SkeletonEditorState,
@@ -3483,15 +3488,30 @@ function getTimelineStripRenderKey(
     skeletonState: SkeletonEditorState,
     playbackState: AnimationPlaybackState,
 ): string {
+    const duration = playbackState.duration;
+    const width = getTimelineContentWidth(duration);
+    const viewport = getTimelineViewportRange(duration, width);
     const keyframes = getTimelineVisibleMarkers(skeletonState)
+        .filter((marker) => {
+            const displayTime = isKeyframeTimeSelected(marker.time)
+                ? clamp(marker.time + timelineRetimePreviewDelta, 0, duration)
+                : marker.time;
+            return isTimelineTimeInViewport(displayTime, viewport);
+        })
         .map((marker) => `${marker.time.toFixed(4)}${marker.selectedBone ? 'b' : ''}`)
         .join(',');
     const selection = selectedKeyframeTimes
+        .filter((time) => isTimelineTimeInViewport(
+            clamp(time + timelineRetimePreviewDelta, 0, duration),
+            viewport,
+        ))
         .map((time) => time.toFixed(4))
         .join(',');
     return [
         playbackState.duration.toFixed(4),
         timelineZoom.toFixed(3),
+        viewport.bucketStart,
+        viewport.bucketEnd,
         timelineFps,
         timelineSnapEnabled ? 1 : 0,
         timelineSelectedBoneOnly ? 1 : 0,
@@ -3521,7 +3541,8 @@ function renderAnimationTimelineNow(
     selectedKeyframeTimes = selectedKeyframeTimes.filter((time) => markerTimes.some((markerTime) => nearlyEqualTimeForUi(time, markerTime)));
     updateTimelineSelectionSummary();
 
-    const ticks = buildTimelineTicks(duration, width).map((tick) => {
+    const viewport = getTimelineViewportRange(duration, width);
+    const ticks = buildTimelineTicks(duration, width, viewport).map((tick) => {
         const left = clamp((tick.time / duration) * 100, 0, 100);
         return `
             <span class="animation-time-tick ${tick.major ? 'major' : 'minor'}" style="left:${left}%">
@@ -3535,6 +3556,7 @@ function renderAnimationTimelineNow(
             const displayTime = selected
                 ? clamp(marker.time + timelineRetimePreviewDelta, 0, duration)
                 : marker.time;
+            if (!isTimelineTimeInViewport(displayTime, viewport)) return '';
             const left = clamp((displayTime / duration) * 100, 0, 100);
             const classes = [
                 'animation-keyframe-marker',
@@ -3601,6 +3623,37 @@ function updateTimelineSelectionSummary(
 function getTimelineContentWidth(duration: number): number {
     if (duration <= 0) return 1600;
     return Math.max(1600, Math.ceil(duration * 220 * timelineZoom));
+}
+
+function getTimelineViewportRange(duration: number, width: number): {
+    startTime: number;
+    endTime: number;
+    bucketStart: number;
+    bucketEnd: number;
+} {
+    if (duration <= 0 || width <= 0) {
+        return { startTime: 0, endTime: 0, bucketStart: 0, bucketEnd: 0 };
+    }
+
+    const viewportWidth = Math.max(1, animTimelineScroll.clientWidth || width);
+    const scrollLeft = Math.max(0, animTimelineScroll.scrollLeft || 0);
+    const bucketStart = Math.floor(scrollLeft / TIMELINE_SCROLL_BUCKET_PX);
+    const bucketEnd = Math.ceil((scrollLeft + viewportWidth) / TIMELINE_SCROLL_BUCKET_PX);
+    const startPx = clamp(scrollLeft - TIMELINE_RENDER_OVERSCAN_PX, 0, width);
+    const endPx = clamp(scrollLeft + viewportWidth + TIMELINE_RENDER_OVERSCAN_PX, 0, width);
+    return {
+        startTime: duration * (startPx / width),
+        endTime: duration * (endPx / width),
+        bucketStart,
+        bucketEnd,
+    };
+}
+
+function isTimelineTimeInViewport(
+    time: number,
+    viewport: { startTime: number; endTime: number },
+): boolean {
+    return time >= viewport.startTime - 1e-5 && time <= viewport.endTime + 1e-5;
 }
 
 function getTimelineVisibleMarkers(skeletonState: SkeletonEditorState): SkeletonEditorState['keyframes'] {
@@ -3675,11 +3728,17 @@ function setTimelineZoom(
     }
 }
 
-function buildTimelineTicks(duration: number, width: number): Array<{ time: number; label: string; major: boolean }> {
+function buildTimelineTicks(
+    duration: number,
+    width: number,
+    viewport = getTimelineViewportRange(duration, width),
+): Array<{ time: number; label: string; major: boolean }> {
     const ticks: Array<{ time: number; label: string; major: boolean }> = [];
     const majorStep = pickTimelineMajorStep(duration, width);
     const minorStep = majorStep / 4;
-    for (let time = 0; time <= duration + minorStep * 0.5; time += minorStep) {
+    const firstTick = Math.max(0, Math.floor(viewport.startTime / minorStep) * minorStep);
+    const lastTick = Math.min(duration, viewport.endTime);
+    for (let time = firstTick; time <= lastTick + minorStep * 0.5; time += minorStep) {
         const clampedTime = Math.min(time, duration);
         const major = nearlyEqual((Math.round(clampedTime / majorStep) * majorStep), clampedTime)
             || nearlyEqual(clampedTime, 0)
