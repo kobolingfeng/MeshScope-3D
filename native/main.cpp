@@ -410,11 +410,22 @@ static std::string make_local_file_token() {
         + "-" + std::to_string(seq);
 }
 
-static void cleanup_preview_cache_dir(const std::wstring& cacheDir, size_t maxFiles = 512) {
+struct PreviewCacheFile {
+    fspath::file_time_type stamp;
+    fspath::path path;
+    std::uintmax_t size = 0;
+};
+
+static void cleanup_preview_cache_dir(
+    const std::wstring& cacheDir,
+    size_t maxFiles = 512,
+    std::uintmax_t maxBytes = 2ull * 1024ull * 1024ull * 1024ull
+) {
     std::error_code ec;
     if (!fspath::exists(cacheDir, ec)) return;
 
-    std::vector<std::pair<fspath::file_time_type, fspath::path>> files;
+    std::vector<PreviewCacheFile> files;
+    std::uintmax_t totalBytes = 0;
     for (fspath::directory_iterator it(cacheDir, ec), end; !ec && it != end; it.increment(ec)) {
         std::error_code entryEc;
         if (!it->is_regular_file(entryEc) || entryEc) continue;
@@ -425,18 +436,26 @@ static void cleanup_preview_cache_dir(const std::wstring& cacheDir, size_t maxFi
         if (ext != L".glb" && ext != L".bin") continue;
         const auto stamp = fspath::last_write_time(it->path(), entryEc);
         if (entryEc) continue;
-        files.emplace_back(stamp, it->path());
+        const auto size = fspath::file_size(it->path(), entryEc);
+        if (entryEc) continue;
+        files.push_back({stamp, it->path(), size});
+        totalBytes += size;
     }
 
-    if (files.size() <= maxFiles) return;
+    if (files.size() <= maxFiles && totalBytes <= maxBytes) return;
     std::sort(files.begin(), files.end(), [](const auto& a, const auto& b) {
-        return a.first < b.first;
+        return a.stamp < b.stamp;
     });
 
-    const size_t deleteCount = files.size() - maxFiles;
-    for (size_t i = 0; i < deleteCount; ++i) {
+    size_t removed = 0;
+    while (
+        removed < files.size()
+        && (files.size() - removed > maxFiles || (totalBytes > maxBytes && files.size() - removed > 1))
+    ) {
         std::error_code removeEc;
-        fspath::remove(files[i].second, removeEc);
+        fspath::remove(files[removed].path, removeEc);
+        if (!removeEc && totalBytes >= files[removed].size) totalBytes -= files[removed].size;
+        ++removed;
     }
 }
 
@@ -1081,6 +1100,7 @@ static json create_glb_preview_file(
         std::lock_guard<std::mutex> lock(g_localFileTokensMutex);
         g_localFileTokens[token] = previewPath;
     }
+    cleanup_preview_cache_dir(cacheDir);
 
     const auto urlProtocol = protocol == "https:" ? std::string{"https"} : std::string{"http"};
     return {
