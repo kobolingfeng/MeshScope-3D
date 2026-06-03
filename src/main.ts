@@ -6326,6 +6326,7 @@ async function saveActiveDocument(choice: SaveChoice): Promise<void> {
 async function ensureAnimationsLoadedForExport(scope: AnimationExportScope): Promise<boolean> {
     const state = viewer.getAnimationState();
     const activeIndex = state.activeIndex;
+    const clipNameByIndex = new Map(state.clips.map((clip) => [clip.index, clip.name]));
     const indices = scope === 'current'
         ? (activeIndex >= 0 ? [activeIndex] : [])
         : state.clips
@@ -6337,7 +6338,8 @@ async function ensureAnimationsLoadedForExport(scope: AnimationExportScope): Pro
     try {
         for (let offset = 0; offset < indices.length; offset += 1) {
             const index = indices[offset];
-            showLoading(`正在准备导出动画 ${offset + 1} / ${indices.length} …`);
+            const name = clipNameByIndex.get(index);
+            showLoading(`正在准备导出动画 ${offset + 1} / ${indices.length}${name ? ` · ${name}` : ''} …`);
             const loaded = await ensureAnimationClipLoaded(index, {
                 autoPlay: false,
                 activate: scope === 'current',
