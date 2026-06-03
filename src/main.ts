@@ -5881,6 +5881,7 @@ function activateDocument(id: string, options: { fit?: boolean } = {}): void {
     resetUndoDrafts();
     selectedKeyframeTimes = [];
     lastScrolledBoneIndex = -1;
+    modelOutlineRenderLimit = MODEL_OUTLINE_RENDER_BATCH;
     currentUvEditorState = null;
     currentUvEdges = [];
     currentUvEdgeMap.clear();
