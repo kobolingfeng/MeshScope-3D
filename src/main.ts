@@ -237,6 +237,7 @@ const btnOutlineShowMore = $<HTMLButtonElement>('btn-outline-show-more');
 const modelOutlineMeta = $('model-outline-meta');
 const modelOutlineList = $('model-outline-list');
 const siblingGlbMeta = $('sibling-glb-meta');
+const siblingGlbSearch = $<HTMLInputElement>('sibling-glb-search');
 const btnSiblingGlbRefresh = $<HTMLButtonElement>('btn-sibling-glb-refresh');
 const siblingGlbList = $('sibling-glb-list');
 const propCameraPos = $('prop-camera-pos');
@@ -966,6 +967,10 @@ function setupOutlineAndSiblingControls(): void {
         const path = button?.dataset.siblingPath;
         if (!button || !path || button.classList.contains('active')) return;
         void openSiblingGlb(path);
+    });
+
+    siblingGlbSearch.addEventListener('input', () => {
+        renderSiblingGlbList();
     });
 
     btnSiblingGlbRefresh.addEventListener('click', () => {
@@ -6635,11 +6640,13 @@ function renderSiblingGlbList(): void {
     if (!active || !inNative || !active.sourcePath || extOf(active.sourcePath) !== 'glb') {
         siblingGlbMeta.textContent = '打开本地 GLB 后显示';
         btnSiblingGlbRefresh.disabled = true;
+        siblingGlbSearch.disabled = true;
         siblingGlbList.innerHTML = '<div class="anim-list-empty">尚无同目录列表</div>';
         return;
     }
 
     btnSiblingGlbRefresh.disabled = false;
+    siblingGlbSearch.disabled = false;
 
     if (!active.siblingGlbs) {
         siblingGlbMeta.textContent = '正在扫描同目录 GLB…';
@@ -6648,17 +6655,26 @@ function renderSiblingGlbList(): void {
     }
 
     const entries = active.siblingGlbs;
+    const query = normalizeSearchText(siblingGlbSearch.value);
+    const filtered = query
+        ? entries.filter((entry) => normalizeSearchText(`${entry.name} ${entry.path}`).includes(query))
+        : entries;
     const otherCount = entries.filter((entry) => !entry.active).length;
-    siblingGlbMeta.textContent = `${entries.length} 个 GLB · ${otherCount} 个可切换`;
+    const filteredOtherCount = filtered.filter((entry) => !entry.active).length;
+    siblingGlbMeta.textContent = query
+        ? `${filtered.length}/${entries.length} 个匹配 · ${filteredOtherCount} 个可切换`
+        : `${entries.length} 个 GLB · ${otherCount} 个可切换`;
 
-    siblingGlbList.innerHTML = entries.length > 0
-        ? entries.map((entry) => `
+    siblingGlbList.innerHTML = filtered.length > 0
+        ? filtered.map((entry) => `
             <button class="sibling-glb-item${entry.active ? ' active' : ''}" type="button" data-sibling-path="${escapeHtml(entry.path)}" ${entry.active ? 'aria-current="true"' : ''}>
                 <span class="sibling-glb-name" title="${escapeHtml(entry.path)}">${escapeHtml(entry.name)}</span>
                 <span class="sibling-glb-size">${entry.active ? '当前' : formatBytes(entry.size)}</span>
             </button>
         `).join('')
-        : '<div class="anim-list-empty">同目录没有 GLB</div>';
+        : entries.length > 0
+            ? '<div class="anim-list-empty">没有匹配 GLB</div>'
+            : '<div class="anim-list-empty">同目录没有 GLB</div>';
 }
 
 function syncPropertyPanelCamera(): void {
