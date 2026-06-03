@@ -233,6 +233,7 @@ const btnOutlineHideCollision = $<HTMLButtonElement>('btn-outline-hide-collision
 const modelOutlineMeta = $('model-outline-meta');
 const modelOutlineList = $('model-outline-list');
 const siblingGlbMeta = $('sibling-glb-meta');
+const btnSiblingGlbRefresh = $<HTMLButtonElement>('btn-sibling-glb-refresh');
 const siblingGlbList = $('sibling-glb-list');
 const propCameraPos = $('prop-camera-pos');
 const propCameraTarget = $('prop-camera-target');
@@ -948,6 +949,10 @@ function setupOutlineAndSiblingControls(): void {
         const path = button?.dataset.siblingPath;
         if (!button || !path || button.classList.contains('active')) return;
         void openSiblingGlb(path);
+    });
+
+    btnSiblingGlbRefresh.addEventListener('click', () => {
+        void refreshActiveSiblingGlbs();
     });
 }
 
@@ -5972,6 +5977,26 @@ async function openSiblingGlb(path: string): Promise<void> {
     await enqueueNativePathLoad([path]);
 }
 
+async function refreshActiveSiblingGlbs(): Promise<void> {
+    const active = getActiveDocument();
+    if (!active?.sourcePath || extOf(active.sourcePath) !== 'glb') {
+        showToast('当前文档不是本地 GLB', 'info');
+        return;
+    }
+
+    const dir = dirNameOfPath(active.sourcePath);
+    if (!dir) {
+        showToast('无法确定当前文件目录', 'error');
+        return;
+    }
+
+    siblingGlbCache.delete(dir);
+    active.siblingGlbs = undefined;
+    renderSiblingGlbList();
+    await scanSiblingGlbsForDocument(active.id);
+    showToast('同目录 GLB 已刷新', 'success');
+}
+
 function showModelLoadNotice(model: Object3D): void {
     const notice = model.userData?.__meshscopeLoadNotice as {
         type?: string;
@@ -6486,9 +6511,12 @@ function renderSiblingGlbList(): void {
     const active = getActiveDocument();
     if (!active || !inNative || !active.sourcePath || extOf(active.sourcePath) !== 'glb') {
         siblingGlbMeta.textContent = '打开本地 GLB 后显示';
+        btnSiblingGlbRefresh.disabled = true;
         siblingGlbList.innerHTML = '<div class="anim-list-empty">尚无同目录列表</div>';
         return;
     }
+
+    btnSiblingGlbRefresh.disabled = false;
 
     if (!active.siblingGlbs) {
         siblingGlbMeta.textContent = '正在扫描同目录 GLB…';

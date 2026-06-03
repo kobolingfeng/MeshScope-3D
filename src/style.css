@@ -863,6 +863,18 @@ summary:focus-visible,
     font-variant-numeric: tabular-nums;
 }
 
+.sibling-glb-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+}
+
+.sibling-glb-head .mini-btn {
+    min-height: 26px;
+    padding: 0 8px;
+}
+
 .model-outline-list,
 .sibling-glb-list {
     display: grid;
