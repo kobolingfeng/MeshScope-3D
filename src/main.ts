@@ -6173,8 +6173,14 @@ async function saveActiveDocument(choice: SaveChoice): Promise<void> {
         if (inNative) {
             await writeExportToPath(targetPath, exported, binary);
             if (choice.animationScope === 'all') {
+                const sourceChanged = !active.sourcePath || !sameNativePath(active.sourcePath, targetPath);
                 active.sourcePath = targetPath;
                 active.name = fileNameOfPath(targetPath);
+                if (sourceChanged) {
+                    active.siblingGlbDir = undefined;
+                    active.siblingGlbs = undefined;
+                    void scanSiblingGlbsForDocument(active.id);
+                }
             }
         } else {
             downloadName = fileNameOfPath(targetPath);
