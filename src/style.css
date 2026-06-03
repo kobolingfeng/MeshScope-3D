@@ -1843,6 +1843,7 @@ input[type="checkbox"] {
 
 .anim-clip-actions {
     position: absolute;
+    z-index: 1;
     right: 4px;
     top: 50%;
     transform: translateY(-50%);
@@ -1855,7 +1856,8 @@ input[type="checkbox"] {
 }
 
 .anim-clip-item:hover .anim-clip-actions,
-.anim-clip-item.active .anim-clip-actions {
+.anim-clip-item.active .anim-clip-actions,
+.anim-clip-item:focus-within .anim-clip-actions {
     display: inline-flex;
 }
 
@@ -2136,16 +2138,28 @@ input[type="checkbox"] {
 
 .anim-clip-item {
     min-width: 0;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 8px;
+    display: block;
     min-height: 30px;
-    padding: 4px 7px;
+    padding: 0;
     border: 1px solid var(--line-base);
     border-radius: 7px;
     background: rgba(255, 255, 255, 0.68);
     color: var(--text-0);
+    text-align: left;
+}
+
+.anim-clip-main {
+    min-width: 0;
+    width: 100%;
+    min-height: 30px;
+    padding: 4px 7px;
+    padding-right: 76px;
+    border-radius: inherit;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    color: inherit;
     cursor: pointer;
     text-align: left;
 }

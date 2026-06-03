@@ -2474,21 +2474,23 @@ function renderAnimationClipList(state: AnimationPlaybackState): void {
                 ? `${clip.duration.toFixed(2)}s · F${frames} · ${clip.tracks} · 按需`
                 : `${clip.duration.toFixed(2)}s · F${frames} · ${clip.tracks}`;
             return `
-                <button class="${className}" type="button" role="option" data-clip-index="${clip.index}"${selected}>
-                    <span class="anim-clip-name">${escapeHtml(clip.name)}</span>
-                    <span class="anim-clip-meta">${escapeHtml(meta)}</span>
-                    <span class="anim-clip-actions" aria-hidden="true">
-                        <span class="anim-clip-action" role="button" tabindex="0" data-action="copy-keyframes" title="复制关键帧">
+                <div class="${className}" role="option" data-clip-index="${clip.index}"${selected}>
+                    <button class="anim-clip-main" type="button" data-clip-index="${clip.index}">
+                        <span class="anim-clip-name">${escapeHtml(clip.name)}</span>
+                        <span class="anim-clip-meta">${escapeHtml(meta)}</span>
+                    </button>
+                    <span class="anim-clip-actions">
+                        <button class="anim-clip-action" type="button" data-action="copy-keyframes" title="复制关键帧" aria-label="复制 ${escapeHtml(clip.name)} 关键帧">
                             <svg viewBox="0 0 24 24"><path d="M9 4h6l1 2h3v14H5V6h3z"/><path d="M9 11h6M9 15h5"/></svg>
-                        </span>
-                        <span class="anim-clip-action" role="button" tabindex="0" data-action="duplicate" title="复制为新动画">
+                        </button>
+                        <button class="anim-clip-action" type="button" data-action="duplicate" title="复制为新动画" aria-label="复制 ${escapeHtml(clip.name)} 为新动画">
                             <svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
-                        </span>
-                        <span class="anim-clip-action danger" role="button" tabindex="0" data-action="delete" title="删除动画">
+                        </button>
+                        <button class="anim-clip-action danger" type="button" data-action="delete" title="删除动画" aria-label="删除 ${escapeHtml(clip.name)}">
                             <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7.5 7l.9 12a1 1 0 0 0 1 .9h5.2a1 1 0 0 0 1-.9L16.5 7"/></svg>
-                        </span>
+                        </button>
                     </span>
-                </button>
+                </div>
             `;
         }).join('')
         : '<div class="anim-list-empty">没有匹配动画</div>';
