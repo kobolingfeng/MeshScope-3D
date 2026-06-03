@@ -410,6 +410,15 @@ static std::string make_local_file_token() {
         + "-" + std::to_string(seq);
 }
 
+static void forget_local_file_tokens_for_path(const std::wstring& path) {
+    if (path.empty()) return;
+    std::lock_guard<std::mutex> lock(g_localFileTokensMutex);
+    for (auto it = g_localFileTokens.begin(); it != g_localFileTokens.end();) {
+        if (it->second == path) it = g_localFileTokens.erase(it);
+        else ++it;
+    }
+}
+
 struct PreviewCacheFile {
     fspath::file_time_type stamp;
     fspath::path path;
@@ -461,6 +470,7 @@ static void cleanup_preview_cache_dir(
         std::error_code removeEc;
         fspath::remove(files[cursor].path, removeEc);
         if (!removeEc) {
+            forget_local_file_tokens_for_path(files[cursor].path.wstring());
             if (totalBytes >= files[cursor].size) totalBytes -= files[cursor].size;
             --remaining;
         }
