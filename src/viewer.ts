@@ -1601,10 +1601,10 @@ export class Viewer {
             : null;
     }
 
-    insertSelectedBoneKeyframe(): void {
+    insertSelectedBoneKeyframe(): boolean {
         const clip = this.ensureActiveAnimationClip();
-        if (!clip || !this.selectedBone) return;
-        this.autoKeyframeBonePoseTargets(clip, [this.selectedBone]);
+        if (!clip || !this.selectedBone) return false;
+        return this.autoKeyframeBonePoseTargets(clip, [this.selectedBone]);
     }
 
     insertSelectedBoneChainKeyframe(): number {

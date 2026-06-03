@@ -1599,8 +1599,11 @@ function setupKeyboardShortcuts(): void {
         if (key === 'Insert') {
             if (viewer.getSelectedBoneLocalTrs()) {
                 event.preventDefault();
-                runAnimationEdit('插入关键帧', () => viewer.insertSelectedBoneKeyframe());
-                showToast('已插入关键帧', 'success');
+                let changed = false;
+                runAnimationEdit('插入关键帧', () => {
+                    changed = viewer.insertSelectedBoneKeyframe();
+                });
+                showToast(changed ? '已插入关键帧' : '没有可插入的关键帧', changed ? 'success' : 'info');
             }
             return;
         }
@@ -2137,10 +2140,11 @@ function setupAnimationControls(): void {
     animTranslationStepInput.addEventListener('change', applyBoneStepSettings);
 
     btnInsertKeyframe.addEventListener('click', () => {
+        let changed = false;
         runAnimationEdit('插入关键帧', () => {
-            viewer.insertSelectedBoneKeyframe();
+            changed = viewer.insertSelectedBoneKeyframe();
         });
-        showToast('已插入骨骼关键帧', 'success');
+        showToast(changed ? '已插入骨骼关键帧' : '没有可插入的骨骼关键帧', changed ? 'success' : 'info');
     });
 
     btnInsertChainKeyframe.addEventListener('click', () => {
