@@ -1383,12 +1383,14 @@ export class Viewer {
 
     getAnimationState(): AnimationPlaybackState {
         const clip = this.animClips[this.activeClipIndex];
+        const clipMeta = this.animClipMetas[this.activeClipIndex];
+        const duration = clipMeta?.duration ?? clip?.duration ?? 0;
         return {
             hasAnimations: this.animClips.length > 0,
             clips: this.animClipMetas.map((meta) => ({ ...meta })),
             activeIndex: this.activeClipIndex,
-            time: this.activeAction?.time ?? 0,
-            duration: clip?.duration ?? 0,
+            time: Math.min(this.activeAction?.time ?? 0, duration),
+            duration,
             playing: this.animationPlaying,
             speed: this.animationSpeed,
             loop: this.animationLoop,
@@ -1408,11 +1410,12 @@ export class Viewer {
             };
         }
 
+        const lazy = getLazyAnimationClipSource(clip);
         return {
             hasAnimations: true,
             activeIndex: this.activeClipIndex,
-            clipName: clip.name && clip.name.trim() ? clip.name : `Clip ${this.activeClipIndex + 1}`,
-            duration: clip.duration,
+            clipName: lazy?.name || (clip.name && clip.name.trim() ? clip.name : `Clip ${this.activeClipIndex + 1}`),
+            duration: lazy?.duration ?? clip.duration,
             tracks: this.getCachedAnimationTrackMetas(clip),
         };
     }
