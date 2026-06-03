@@ -1940,6 +1940,21 @@ function setupAnimationControls(): void {
             renderAnimationClipList(viewer.getAnimationState());
             return;
         }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            const direction = event.key === 'ArrowDown' ? 1 : -1;
+            const state = viewer.getAnimationState();
+            const indices = getFilteredAnimationClips(state).map((clip) => clip.index);
+            if (indices.length === 0) return;
+            const current = indices.indexOf(state.activeIndex);
+            const nextOffset = current < 0
+                ? (direction > 0 ? 0 : indices.length - 1)
+                : (current + direction + indices.length) % indices.length;
+            const nextIndex = indices[nextOffset];
+            event.preventDefault();
+            selectedKeyframeTimes = [];
+            void activateAnimationClip(nextIndex, state.playing);
+            return;
+        }
         if (event.key !== 'Enter') return;
         const first = animClipList.querySelector<HTMLElement>('[data-clip-index]');
         if (!first) return;
@@ -2451,7 +2466,7 @@ function refreshAnimationBar(state: AnimationPlaybackState): void {
 
 function renderAnimationClipList(state: AnimationPlaybackState): void {
     const query = normalizeSearchText(animClipSearch.value);
-    const clips = state.clips.filter((clip) => normalizeSearchText(clip.name).includes(query));
+    const clips = getFilteredAnimationClips(state);
     const renderKey = [
         query,
         state.activeIndex,
@@ -2501,6 +2516,13 @@ function renderAnimationClipList(state: AnimationPlaybackState): void {
         }).join('')
         : '<div class="anim-list-empty">没有匹配动画</div>';
     scrollActiveAnimationClipIntoView(state.activeIndex);
+}
+
+function getFilteredAnimationClips(state: AnimationPlaybackState): AnimationPlaybackState['clips'] {
+    const query = normalizeSearchText(animClipSearch.value);
+    return query
+        ? state.clips.filter((clip) => normalizeSearchText(clip.name).includes(query))
+        : state.clips;
 }
 
 function scrollActiveAnimationClipIntoView(index: number): void {
