@@ -2416,22 +2416,7 @@ function setupAnimationControls(): void {
     bindNumericPair(animTimeScaleRange, animTimeScaleInput, () => undefined);
 
     btnApplyAnimTimeScale.addEventListener('click', () => {
-        const state = viewer.getAnimationState();
-        if (!state.hasAnimations || state.activeIndex < 0) {
-            showToast('需要先选择一个动画', 'info');
-            return;
-        }
-        const factor = Number(animTimeScaleInput.value);
-        if (!Number.isFinite(factor) || factor <= 0) return;
-        if (nearlyEqual(factor, 1)) {
-            showToast('时长倍率未变化', 'info');
-            return;
-        }
-        runAnimationEdit('动画时长', () => {
-            viewer.scaleActiveAnimationTiming(factor);
-        });
-        setNumericPairValue(animTimeScaleRange, animTimeScaleInput, 1);
-        showToast('动画时长已更新', 'success');
+        void applyActiveAnimationTimeScale();
     });
 
     btnApplySelectedTimeScale.addEventListener('click', () => {
@@ -2949,6 +2934,30 @@ function reverseSelectedTimelineKeyframes(): void {
     if (selectedKeyframeTimes.length > 0) viewer.seekAnimation(selectedKeyframeTimes[0]);
     renderAnimationTimeline(viewer.getSkeletonEditorState(), viewer.getAnimationState());
     showToast(`已反转 ${selectedKeyframeTimes.length} 个关键帧`, 'success');
+}
+
+async function applyActiveAnimationTimeScale(): Promise<void> {
+    const state = viewer.getAnimationState();
+    if (!state.hasAnimations || state.activeIndex < 0) {
+        showToast('需要先选择一个动画', 'info');
+        return;
+    }
+
+    const loaded = await ensureAnimationClipLoaded(state.activeIndex, { autoPlay: false });
+    if (!loaded) return;
+
+    const factor = Number(animTimeScaleInput.value);
+    if (!Number.isFinite(factor) || factor <= 0) return;
+    if (nearlyEqual(factor, 1)) {
+        showToast('时长倍率未变化', 'info');
+        return;
+    }
+
+    runAnimationEdit('动画时长', () => {
+        viewer.scaleActiveAnimationTiming(factor);
+    });
+    setNumericPairValue(animTimeScaleRange, animTimeScaleInput, 1);
+    showToast('动画时长已更新', 'success');
 }
 
 function scaleSelectedTimelineKeyframes(): void {
