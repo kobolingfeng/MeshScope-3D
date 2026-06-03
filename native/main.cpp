@@ -970,10 +970,10 @@ static json create_glb_preview_file(
     const int animationCount = doc.contains("animations") && doc["animations"].is_array()
         ? static_cast<int>(doc["animations"].size())
         : 0;
-    if (animationCount <= 0) {
+    if (animationIndex >= 0 && animationCount <= 0) {
         return {{"used", false}, {"reason", "no-animations"}, {"originalBytes", totalLength}};
     }
-    if (animationIndex >= animationCount) {
+    if (animationIndex >= 0 && animationIndex >= animationCount) {
         throw std::runtime_error("Animation index out of range");
     }
 
