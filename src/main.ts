@@ -922,6 +922,26 @@ function setupOutlineAndSiblingControls(): void {
         renderModelOutline();
     });
 
+    modelOutlineSearch.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            modelOutlineSearch.value = '';
+            modelOutlineRenderLimit = MODEL_OUTLINE_RENDER_BATCH;
+            renderModelOutline();
+            return;
+        }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            focusOutlineNode(event.key === 'ArrowDown' ? 1 : -1);
+            return;
+        }
+        if (event.key !== 'Enter') return;
+        const [first] = getFilteredModelOutlineItems();
+        if (!first) return;
+        event.preventDefault();
+        frameOutlineNode(first.id);
+    });
+
     modelOutlineFilter.addEventListener('change', () => {
         modelOutlineRenderLimit = MODEL_OUTLINE_RENDER_BATCH;
         renderModelOutline();
@@ -957,8 +977,19 @@ function setupOutlineAndSiblingControls(): void {
         const button = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-outline-frame]');
         const id = button?.dataset.outlineId;
         if (!button || !id) return;
-        if (viewer.frameOutlineNode(id)) {
-            syncPropertyPanelCamera();
+        frameOutlineNode(id);
+    });
+
+    modelOutlineList.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            focusOutlineNode(event.key === 'ArrowDown' ? 1 : -1);
+            return;
+        }
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            modelOutlineSearch.focus();
+            modelOutlineSearch.select();
         }
     });
 
@@ -6682,13 +6713,7 @@ function syncPropertyPanel(): void {
 
 function renderModelOutline(): void {
     const items = viewer.getModelOutline();
-    const query = normalizeSearchText(modelOutlineSearch.value);
-    const filter = getModelOutlineFilter();
-    const filtered = items.filter((item) => {
-        if (!matchesModelOutlineFilter(item, filter)) return false;
-        if (!query) return true;
-        return normalizeSearchText(`${item.name} ${item.type} ${item.collision ? 'collision 碰撞' : ''}`).includes(query);
-    });
+    const filtered = getFilteredModelOutlineItems(items);
     const rendered = filtered.slice(0, Math.max(MODEL_OUTLINE_RENDER_BATCH, modelOutlineRenderLimit));
 
     const visibleCount = items.filter((item) => item.effectiveVisible).length;
@@ -6713,6 +6738,16 @@ function renderModelOutline(): void {
     }
 
     modelOutlineList.innerHTML = rendered.map(renderModelOutlineItem).join('');
+}
+
+function getFilteredModelOutlineItems(items = viewer.getModelOutline()): ModelOutlineItem[] {
+    const query = normalizeSearchText(modelOutlineSearch.value);
+    const filter = getModelOutlineFilter();
+    return items.filter((item) => {
+        if (!matchesModelOutlineFilter(item, filter)) return false;
+        if (!query) return true;
+        return normalizeSearchText(`${item.name} ${item.type} ${item.collision ? 'collision 碰撞' : ''}`).includes(query);
+    });
 }
 
 function getModelOutlineFilter(): ModelOutlineFilter {
@@ -6743,6 +6778,24 @@ function renderModelOutlineItem(item: ModelOutlineItem): string {
             <span class="${typeClass}">${escapeHtml(typeLabel)}</span>
         </div>
     `;
+}
+
+function focusOutlineNode(direction: 1 | -1): boolean {
+    const buttons = Array.from(modelOutlineList.querySelectorAll<HTMLButtonElement>('[data-outline-frame]'));
+    if (buttons.length === 0) return false;
+
+    const activeIndex = buttons.findIndex((button) => button === document.activeElement);
+    const nextIndex = activeIndex < 0
+        ? (direction > 0 ? 0 : buttons.length - 1)
+        : clamp(activeIndex + direction, 0, buttons.length - 1);
+    buttons[nextIndex]?.focus();
+    return true;
+}
+
+function frameOutlineNode(id: string): boolean {
+    const framed = viewer.frameOutlineNode(id);
+    if (framed) syncPropertyPanelCamera();
+    return framed;
 }
 
 function renderSiblingGlbList(): void {
