@@ -15,6 +15,13 @@ export type DirectoryEntry = {
     size?: number;
 };
 
+export type FileInfo = {
+    exists: boolean;
+    isDir: boolean;
+    isFile: boolean;
+    size: number;
+};
+
 export const win = {
     setTitle:       (title: string) => invoke<boolean>('window.setTitle', { title }),
     minimize:       () => invoke<boolean>('window.minimize'),
@@ -40,6 +47,7 @@ export const dialog = {
 
 export const fs = {
     readDir:        (path: string) => invoke<DirectoryEntry[]>('fs.readDir', { path }),
+    stat:           (path: string) => invoke<FileInfo>('fs.stat', { path }),
     readTextFile:   (path: string) => invoke<string>('fs.readTextFile', { path }),
     createGlbPreview: (path: string, minBytes = 512 * 1024 * 1024) =>
         invoke<{

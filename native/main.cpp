@@ -1649,6 +1649,23 @@ static void reg_fs() {
     ipc_on("fs.exists", [](const json& a) -> json {
         return fspath::exists(U2W(a.value("path", std::string{})));
     });
+    ipc_on("fs.stat", [](const json& a) -> json {
+        const auto path = U2W(a.value("path", std::string{}));
+        json result = {
+            {"exists", false},
+            {"isDir", false},
+            {"isFile", false},
+            {"size", 0},
+        };
+        if (!fspath::exists(path)) return result;
+        result["exists"] = true;
+        result["isDir"] = fspath::is_directory(path);
+        result["isFile"] = fspath::is_regular_file(path);
+        if (result["isFile"].get<bool>()) {
+            result["size"] = static_cast<std::uintmax_t>(fspath::file_size(path));
+        }
+        return result;
+    });
     ipc_on("fs.readDir", [](const json& a) -> json {
         auto path = a.value("path", std::string{});
         json entries = json::array();

@@ -145,6 +145,7 @@ type LayoutState = {
 const LAYOUT_KEY = 'portable-3d-viewer.layout.v9';
 const MAX_UNDO_STEPS = 80;
 const BONE_STEP_UNDO_IDLE_MS = 420;
+const LARGE_GLB_PREVIEW_THRESHOLD_BYTES = 48 * 1024 * 1024;
 const INSPECTOR_MIN_WIDTH = 280;
 const LEFT_SIDEBAR_MIN_WIDTH = 220;
 const DEFAULT_LAYOUT: LayoutState = {
@@ -5939,7 +5940,8 @@ async function loadNativePaths(paths: string[]): Promise<void> {
 
     for (const path of supported) {
         const name = fileNameOfPath(path);
-        showLoading(`正在加载 ${name} …`);
+        const info = await getNativeFileInfo(path);
+        showLoading(createNativeLoadMessage(name, path, info?.size ?? 0));
         try {
             const model = await loadFromPath(path);
             openDocumentWithModel(name, model, path);
@@ -5967,6 +5969,23 @@ function enqueueNativePathLoad(paths: string[]): Promise<void> {
     return nativeOpenQueue.catch((error) => {
         console.error(error);
     });
+}
+
+async function getNativeFileInfo(path: string): Promise<{ size: number } | null> {
+    if (!inNative) return null;
+    try {
+        const info = await fs.stat(path);
+        return info.exists && info.isFile ? { size: info.size } : null;
+    } catch {
+        return null;
+    }
+}
+
+function createNativeLoadMessage(name: string, path: string, size: number): string {
+    if (extOf(path) === 'glb' && size >= LARGE_GLB_PREVIEW_THRESHOLD_BYTES) {
+        return `正在生成快预览 ${name} (${formatBytes(size)}) …`;
+    }
+    return `正在加载 ${name} …`;
 }
 
 async function scanSiblingGlbsForDocument(documentId: string): Promise<void> {
