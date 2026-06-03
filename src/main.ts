@@ -2573,7 +2573,18 @@ async function ensureAnimationClipLoaded(
 
     const key = `${source.path}\0${source.index}`;
     const existing = lazyAnimationLoads.get(key);
-    if (existing) return existing;
+    if (existing) {
+        const loaded = await existing;
+        if (loaded && (opts.activate ?? true)) {
+            viewer.selectAnimationClip(index, { autoPlay: opts.autoPlay ?? false });
+            selectedKeyframeTimes = [];
+            if (!opts.quiet) {
+                refreshAnimationBar(viewer.getAnimationState());
+                syncAnimationEditor();
+            }
+        }
+        return loaded;
+    }
 
     const task = (async () => {
         const label = source.name || `Animation ${source.index + 1}`;
